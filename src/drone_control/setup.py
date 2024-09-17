@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'keyboard_control = drone_control.keyboard_control:main',
         ],
     },
 )
