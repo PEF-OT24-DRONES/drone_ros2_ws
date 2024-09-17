@@ -12,12 +12,15 @@ class SerialMotorSubscriber(Node):
             self.listener_callback,
             10)
         self.subscription  # evita que Python elimine la suscripción
+        self.get_logger().info('Serial Motor Subscriber node initiated')
         # Configura la conexión serial
         try:
             self.ser = serial.Serial('/dev/ttyACM0', 9600)  # Ajusta el puerto según sea necesario
         except serial.SerialException:
             self.get_logger().error('No se pudo abrir el puerto serial')
             exit(1)
+        
+        
 
     def listener_callback(self, msg):
         self.get_logger().info(f'Recibido: "{msg.data}"')
