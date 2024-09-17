@@ -1,86 +1,286 @@
-#!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
-from px4_msgs.msg import VehicleCommand, OffboardControlMode, TrajectorySetpoint
-import time
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleLocalPosition, VehicleStatus
+from std_msgs.msg import String
+import math
+
 
 class OffboardControlNode(Node):
-    def __init__(self):
-        super().__init__('offboard_control_node')
-        self.subscription = self.create_subscription(
-            Twist,
-            '/drone/cmd_vel',
-            self.cmd_vel_callback,
-            10)
+    """Node for controlling the drone with the keyboard in offboard mode."""
 
-        # Publishers for PX4 Offboard control
-        self.offboard_control_mode_publisher_ = self.create_publisher(
-            OffboardControlMode, "/fmu/offboard_control_mode/in", 10)
-        self.trajectory_setpoint_publisher_ = self.create_publisher(
-            TrajectorySetpoint, "/fmu/trajectory_setpoint/in", 10)
-        self.vehicle_command_publisher_ = self.create_publisher(
-            VehicleCommand, "/fmu/vehicle_command/in", 10)
+    def __init__(self) -> None:
+        super().__init__('offboard_control')
 
-        self.timer_ = self.create_timer(0.1, self.timer_callback)
-        self.offboard_setpoint_counter_ = 0
-        self.twist = Twist()
+        # Configure QoS profile for publishing and subscribing
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
 
-    def cmd_vel_callback(self, msg):
-        self.twist = msg
+        # Create publishers
+        self.offboard_control_mode_publisher = self.create_publisher(
+            OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
+        self.trajectory_setpoint_publisher = self.create_publisher(
+            TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
+        self.vehicle_command_publisher = self.create_publisher(
+            VehicleCommand, '/fmu/in/vehicle_command', qos_profile)
 
-    def timer_callback(self):
-        # Arm the vehicle and switch to offboard mode after sending a few setpoints
-        if self.offboard_setpoint_counter_ == 10:
-            self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
-            self.get_logger().info("Offboard mode activated")
-            self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-            self.get_logger().info("Vehicle armed")
+        # Create subscribers
+        self.vehicle_local_position_subscriber = self.create_subscription(
+            VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.vehicle_local_position_callback, qos_profile)
+        self.vehicle_status_subscriber = self.create_subscription(
+            VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
+        self.keyboard_subscriber = self.create_subscription(String,"keyboard",self.keyboard_callback,10)
 
-        # Publish OffboardControlMode
-        offboard_msg = OffboardControlMode()
-        offboard_msg.timestamp = self.get_timestamp()
-        offboard_msg.position = False
-        offboard_msg.velocity = True
-        offboard_msg.acceleration = False
-        offboard_msg.attitude = False
-        offboard_msg.body_rate = False
-        self.offboard_control_mode_publisher_.publish(offboard_msg)
+        # Initialize variables
+        self.offboard_setpoint_counter = 0
+        self.vehicle_local_position = VehicleLocalPosition()
+        self.vehicle_status = VehicleStatus()
+        self.keyboard = String()
+        self.mode = 0
+        self.v = 1.0
+        self.yawspeed = math.pi/2
 
-        # Publish TrajectorySetpoint
-        traj_msg = TrajectorySetpoint()
-        traj_msg.timestamp = self.get_timestamp()
-        traj_msg.vx = self.twist.linear.x
-        traj_msg.vy = self.twist.linear.y
-        traj_msg.vz = self.twist.linear.z
-        traj_msg.yaw = self.twist.angular.z
-        self.trajectory_setpoint_publisher_.publish(traj_msg)
+        # Create a timer to publish control commands
+        self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.offboard_setpoint_counter_ += 1
+    def keyboard_callback(self,keyboard):
+        self.keyboard = keyboard
 
-    def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
+    def vehicle_local_position_callback(self, vehicle_local_position):
+        """Callback function for vehicle_local_position topic subscriber."""
+        self.vehicle_local_position = vehicle_local_position
+
+    def vehicle_status_callback(self, vehicle_status):
+        """Callback function for vehicle_status topic subscriber."""
+        self.vehicle_status = vehicle_status
+
+    def arm(self):
+        """Send an arm command to the vehicle."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
+        self.get_logger().info('Arm command sent')
+
+    def disarm(self):
+        """Send a disarm command to the vehicle."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
+        self.get_logger().info('Disarm command sent')
+
+    def engage_offboard_mode(self):
+        """Switch to offboard mode."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1=1.0, param2=6.0)
+        self.get_logger().info("Switching to offboard mode")
+
+    def land(self):
+        """Switch to land mode."""
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+        self.get_logger().info("Switching to land mode")
+
+    def takeoff(self):
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF,param5=self.vehicle_local_position.ref_lat,param6=self.vehicle_local_position.ref_lon,param7=self.vehicle_local_position.ref_alt+5)
+        self.get_logger().info("Switching to takeoff mode")
+
+    def publish_offboard_control_heartbeat_signal(self):
+        """Publish the offboard control mode."""
+        msg = OffboardControlMode()
+        msg.position = False
+        msg.velocity = True
+        msg.acceleration = False
+        msg.attitude = False
+        msg.body_rate = False
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.offboard_control_mode_publisher.publish(msg)
+
+    def publish_movement_setpoint(self, x, y, z, yaw):
+        """Publish the trajectory setpoint."""
+        msg = TrajectorySetpoint()
+        msg.position = [self.vehicle_local_position.x, self.vehicle_local_position.y, self.vehicle_local_position.z]
+        msg.velocity = [x, y, z]
+        msg.yaw = self.vehicle_local_position.heading
+        msg.yawspeed = yaw
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.trajectory_setpoint_publisher.publish(msg)
+
+    def publish_vehicle_command(self, command, **params) -> None:
+        """Publish a vehicle command."""
         msg = VehicleCommand()
-        msg.timestamp = self.get_timestamp()
-        msg.param1 = param1
-        msg.param2 = param2
         msg.command = command
+        msg.param1 = params.get("param1", 0.0)
+        msg.param2 = params.get("param2", 0.0)
+        msg.param3 = params.get("param3", 0.0)
+        msg.param4 = params.get("param4", 0.0)
+        msg.param5 = params.get("param5", 0.0)
+        msg.param6 = params.get("param6", 0.0)
+        msg.param7 = params.get("param7", 0.0)
         msg.target_system = 1
         msg.target_component = 1
         msg.source_system = 1
         msg.source_component = 1
         msg.from_external = True
-        self.vehicle_command_publisher_.publish(msg)
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.vehicle_command_publisher.publish(msg)
 
-    def get_timestamp(self):
-        return int(self.get_clock().now().nanoseconds / 1000)  # PX4 timestamp is in microseconds
+    def timer_callback(self) -> None:
+        
+        self.publish_offboard_control_heartbeat_signal()
 
-def main(args=None):
+        if self.keyboard.data == "plus" and self.v < 10.0:
+            self.v += 0.1
+            print("Speed: ", self.v)
+            self.keyboard.data = "none"
+        
+        elif self.keyboard.data == "minus" and self.v > 0.0:
+            self.v -= 0.1
+            print("Speed:", self.v)
+            self.keyboard.data = "none"
+
+        if self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_STANDBY:
+            if self.keyboard.data == "arm":
+                self.arm()
+                self.get_logger().info("Sent ARM command")
+                self.keyboard.data = "none"
+
+        elif self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_ARMED:
+
+            if self.keyboard.data == "arm":
+                self.get_logger().info("Drone already ARMED")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "takeoff" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_TAKEOFF:
+                self.takeoff()
+                self.get_logger().info("Sent TAKEOFF command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "takeoff" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_TAKEOFF:
+                self.get_logger().info("Drone already in TAKEOFF mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "land" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
+                self.land()
+                self.get_logger().info("Sent LAND command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "land" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
+                self.get_logger().info("Drone already in LAND mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "offboard" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+                self.engage_offboard_mode()
+                self.get_logger().info("Sent engage OFFBOARD command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "offboard" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+                self.get_logger().info("Drone already in OFFBOARD mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "return" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_MISSION:
+                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH)
+                self.get_logger().info("Sent RETURN TO LAUNCH command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "return" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_MISSION:
+                self.get_logger().info("Drone already in RETURN mode")
+                self.keyboard.data = "none"
+
+            elif self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            
+                if self.keyboard.data == "right":
+                    vx = self.v * math.cos(self.vehicle_local_position.heading + math.pi/2)
+                    vy = self.v * math.sin(self.vehicle_local_position.heading + math.pi/2)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "left":
+                    vx = -self.v * math.cos(self.vehicle_local_position.heading + math.pi/2)
+                    vy = -self.v * math.sin(self.vehicle_local_position.heading + math.pi/2)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "front":
+                    vx = self.v * math.cos(self.vehicle_local_position.heading)
+                    vy = self.v * math.sin(self.vehicle_local_position.heading)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "back":
+                    vx = -self.v * math.cos(self.vehicle_local_position.heading)
+                    vy = -self.v * math.sin(self.vehicle_local_position.heading)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "up":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = -0.25 #Goes up
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "down":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.25 #Goes down
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "rotate_right":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = math.pi/8
+                    self.get_logger().info("Rotating Right")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "rotate_left":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = -math.pi/8
+                    self.get_logger().info("Rotating Left")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "stop":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Set speed to: [" + str(vx) + ", " + str(vy) + ", " + str(vz) + "]")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+                            
+def main(args=None) -> None:
+    print('Starting keyboard control script')
     rclpy.init(args=args)
-    node = OffboardControlNode()
-    rclpy.spin(node)
-    node.destroy_node()
+    offboard_control = OffboardControlNode()
+    rclpy.spin(offboard_control)
+    offboard_control.destroy_node()
     rclpy.shutdown()
 
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(e)

@@ -2,60 +2,83 @@
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+import curses
+from std_msgs.msg import String
 
-import sys
-import select
-import termios
-import tty
+class KeyboardControlNode(Node):
 
-class KeyboardControl(Node):
     def __init__(self):
-        super().__init__('keyboard_control')
-        self.publisher_ = self.create_publisher(Twist, '/drone/cmd_vel', 10)
-        self.get_logger().info('Keyboard control node has been started.')
+        super().__init__("keyboard_control")
 
-    def run(self):
-        settings = termios.tcgetattr(sys.stdin)
+        self.screen = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        self.screen.keypad(True)
+
+        self.keyboard_monitor_publisher = self.create_publisher(String, "keyboard", 10)
+        self.prev_char = None
+        self.keyboard()
+
+    def keyboard(self):
         try:
-            print("Controla el dron con las teclas WASD:")
             while True:
-                tty.setraw(sys.stdin.fileno())
-                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-                if rlist:
-                    key = sys.stdin.read(1)
-                    twist = Twist()
-                    if key == 'w':
-                        twist.linear.x = 1.0
-                    elif key == 's':
-                        twist.linear.x = -1.0
-                    elif key == 'a':
-                        twist.linear.y = 1.0
-                    elif key == 'd':
-                        twist.linear.y = -1.0
-                    elif key == 'q':
-                        twist.angular.z = 1.0
-                    elif key == 'e':
-                        twist.angular.z = -1.0
-                    elif key == '\x03':  # Ctrl+C
-                        break
-                    else:
-                        continue
-                    self.publisher_.publish(twist)
+                char = self.screen.getch()
+                msg = String()
+                # Modes
+                if char == ord('T'):
+                    msg.data = "takeoff"
+                elif char == ord('L'):
+                    msg.data = "land"
+                elif char == ord('A'):
+                    msg.data = "arm"
+                elif char == ord('O'):
+                    msg.data = "offboard"
+                elif char == ord('R'):
+                    msg.data = "return"
+                elif char == curses.KEY_DOWN:
+                    msg.data = "back"
+                elif char == curses.KEY_UP:
+                    msg.data = "front"
+                elif char == curses.KEY_RIGHT:
+                    msg.data = "right"
+                elif char == curses.KEY_LEFT:
+                    msg.data = "left"
+                elif char == ord('w'):
+                    msg.data = "up"
+                elif char == ord('a'):
+                    msg.data = "rotate_left"
+                elif char == ord('s'):
+                    msg.data = "down"
+                elif char == ord('d'):
+                    msg.data = "rotate_right"
+                elif char == 43:  # + symbol ascii
+                    msg.data = "plus"
+                elif char == 45:  # - symbol ascii
+                    msg.data = "minus"
+                elif char == ord(' '):
+                    msg.data = "stop"
                 else:
-                    twist = Twist()
-                    self.publisher_.publish(twist)
-        except Exception as e:
-            self.get_logger().error(f'Error: {e}')
+                    continue  # Ignorar otras teclas
+
+                self.get_logger().info(f"Comando enviado: {msg.data}")
+                self.keyboard_monitor_publisher.publish(msg)
+
         finally:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+            curses.nocbreak()
+            self.screen.keypad(0)
+            curses.echo()
+            curses.endwin()
 
 def main(args=None):
     rclpy.init(args=args)
-    node = KeyboardControl()
-    node.run()
-    node.destroy_node()
+    keyboard_listener = KeyboardControlNode()
+    try:
+        rclpy.spin(keyboard_listener)
+    except KeyboardInterrupt:
+        pass
+    keyboard_listener.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
+
