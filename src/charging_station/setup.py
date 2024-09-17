@@ -20,6 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'serial_motor_publisher = charging_station.serial_motor_publisher:main',
+            'serial_motor_subscriber = charging_station.serial_motor_subscriber:main',
         ],
     },
 )
