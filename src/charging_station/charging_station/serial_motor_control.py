@@ -9,7 +9,7 @@ class SerialMotorControl(Node):
         self.get_logger().info('Serial Motor Control Node has been started.')
         
         # Initialize serial connection
-        self.serial_port = '/dev/ttyUSB0'  # Update with your serial port
+        self.serial_port = '/dev/ttyACM0'  # Update with your serial port
         self.baud_rate = 9600  # Update with your baud rate
         self.serial_connection = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
         
