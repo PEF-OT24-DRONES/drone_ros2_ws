@@ -219,29 +219,143 @@ class OffboardControlNode(Node):
         elif self.keyboard.data == "left":
             self.publish_movement_setpoint(-self.v, 0.0, 0.0, 0.0)
             self.keyboard.data = "none"
-        elif self.keyboard.data == "front":
-            self.publish_movement_setpoint(0.0, self.v, 0.0, 0.0)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "back":
-            self.publish_movement_setpoint(0.0, -self.v, 0.0, 0.0)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "up":
-            self.publish_movement_setpoint(0.0, 0.0, self.v, 0.0)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "down":
-            self.publish_movement_setpoint(0.0, 0.0, -self.v, 0.0)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "rotate_right":
-            self.publish_movement_setpoint(0.0, 0.0, 0.0, math.pi / 8)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "rotate_left":
-            self.publish_movement_setpoint(0.0, 0.0, 0.0, -math.pi / 8)
-            self.keyboard.data = "none"
-        elif self.keyboard.data == "stop":
-            self.publish_stabilizing_setpoint()
-            self.keyboard.data = "none"
-        else:
-            self.publish_stabilizing_setpoint()  # Send stabilizing setpoint when no commands are active
+
+        if self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_STANDBY:
+            if self.keyboard.data == "arm":
+                self.arm()
+                self.get_logger().info("Sent ARM command")
+                self.keyboard.data = "none"
+
+        elif self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_ARMED:
+
+            if self.keyboard.data == "arm":
+                self.get_logger().info("Drone already ARMED")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "takeoff" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_TAKEOFF:
+                self.takeoff()
+                self.get_logger().info("Sent TAKEOFF command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "takeoff" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_TAKEOFF:
+                self.get_logger().info("Drone already in TAKEOFF mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "land" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
+                self.land()
+                self.get_logger().info("Sent LAND command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "land" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
+                self.get_logger().info("Drone already in LAND mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "offboard" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+                self.engage_offboard_mode()
+                self.get_logger().info("Sent engage OFFBOARD command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "offboard" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+                self.get_logger().info("Drone already in OFFBOARD mode")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "return" and self.vehicle_status.nav_state != VehicleStatus.NAVIGATION_STATE_AUTO_MISSION:
+                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH)
+                self.get_logger().info("Sent RETURN TO LAUNCH command")
+                self.keyboard.data = "none"
+
+            elif self.keyboard.data == "return" and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_MISSION:
+                self.get_logger().info("Drone already in RETURN mode")
+                self.keyboard.data = "none"
+
+            elif self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+
+                if self.keyboard.data == "right":
+                    vx = self.v * math.cos(self.vehicle_local_position.heading + math.pi / 2)
+                    vy = self.v * math.sin(self.vehicle_local_position.heading + math.pi / 2)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving RIGHT with velocity: vx={vx}, vy={vy}, vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "left":
+                    vx = -self.v * math.cos(self.vehicle_local_position.heading + math.pi / 2)
+                    vy = -self.v * math.sin(self.vehicle_local_position.heading + math.pi / 2)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving LEFT with velocity: vx={vx}, vy={vy}, vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "front":
+                    vx = self.v * math.cos(self.vehicle_local_position.heading)
+                    vy = self.v * math.sin(self.vehicle_local_position.heading)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving FRONT with velocity: vx={vx}, vy={vy}, vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "back":
+                    vx = -self.v * math.cos(self.vehicle_local_position.heading)
+                    vy = -self.v * math.sin(self.vehicle_local_position.heading)
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving BACK with velocity: vx={vx}, vy={vy}, vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "up":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = -0.25  # Goes up
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving UP with velocity: vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "down":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.25  # Goes down
+                    yawspeed = 0.0
+                    self.get_logger().info(f"Moving DOWN with velocity: vz={vz}")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "rotate_right":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = math.pi / 8
+                    self.get_logger().info("Rotating RIGHT")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "rotate_left":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = -math.pi / 8
+                    self.get_logger().info("Rotating LEFT")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                elif self.keyboard.data == "stop":
+                    vx = 0.0
+                    vy = 0.0
+                    vz = 0.0
+                    yawspeed = 0.0
+                    self.get_logger().info("Stopping movement")
+                    self.publish_movement_setpoint(vx, vy, vz, yawspeed)
+                    self.keyboard.data = "none"
+
+                else:
+                    # Log unrecognized command
+                    if self.keyboard.data != "none":
+                        self.get_logger().warn(f"Unrecognized command in OFFBOARD mode: {self.keyboard.data}")
+                        self.keyboard.data = "none"
 
 
 def main(args=None) -> None:
