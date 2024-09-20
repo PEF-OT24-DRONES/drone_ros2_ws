@@ -159,7 +159,7 @@ class OffboardControlNode(Node):
             self.get_logger().info(f"Speed decreased: {self.v}")
             self.keyboard.data = "none"
 
-        if self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_STANDBY:
+        if self.vehicle_status.arming_state == VehicleStatus.ARMING_STATE_DISARMED:
             if self.keyboard.data == "arm":
                 self.arm()
                 self.get_logger().info("Sent ARM command")

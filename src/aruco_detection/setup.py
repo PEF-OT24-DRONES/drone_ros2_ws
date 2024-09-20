@@ -21,6 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_node = aruco_detection.camera_node:main',
+            'camera_receiver_node = aruco_detection.camera_receiver_node:main',
+            'aruco_pose_detection_node = aruco_detection.aruco_pose_detection:main',
         ],
     },
 )
