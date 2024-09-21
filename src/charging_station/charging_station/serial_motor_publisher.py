@@ -10,8 +10,8 @@ class SerialMotorPublisher(Node):
 
     def run(self):
         while rclpy.ok():
-            user_input = input('Ingresa 0 o 1: ')
-            if user_input in ['0', '1']:
+            user_input = input('Ingresa 0, 1 o 2: ')
+            if user_input in ['0', '1', '2']:
                 msg = String()
                 msg.data = user_input
                 self.publisher_.publish(msg)
