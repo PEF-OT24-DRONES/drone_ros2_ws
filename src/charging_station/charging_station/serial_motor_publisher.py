@@ -6,12 +6,12 @@ class SerialMotorPublisher(Node):
     def __init__(self):
         super().__init__('serial_motor_publisher')
         self.publisher_ = self.create_publisher(String, 'serial_motor_control', 10)
-        self.get_logger().info('Nodo publicador iniciado. Presiona 0 o 1 para enviar comandos.')
+        self.get_logger().info('Nodo publicador iniciado. Presiona 0, 1 o 2 para enviar comandos.')
 
     def run(self):
         while rclpy.ok():
-            user_input = input('Ingresa 0 o 1: ')
-            if user_input in ['0', '1']:
+            user_input = input('Ingresa 0, 1 o 2: ')
+            if user_input in ['0', '1', '2']:
                 msg = String()
                 msg.data = user_input
                 self.publisher_.publish(msg)

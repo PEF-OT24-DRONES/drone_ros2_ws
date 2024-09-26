@@ -26,10 +26,13 @@ class SerialMotorSubscriber(Node):
         self.get_logger().info(f'Recibido: "{msg.data}"')
         if msg.data == '1':
             self.ser.write(b'1')  # Envía el byte '1' al Arduino
-            self.get_logger().info('Enviando "1" al Arduino.')
+            self.get_logger().info('Enviando "1" al Arduino. Adelante')
+        elif msg.data == '2':
+            self.ser.write(b'2')  # Envía el byte '0' al Arduino
+            self.get_logger().info('Enviando "2" al Arduino. Reversa')
         elif msg.data == '0':
             self.ser.write(b'0')  # Envía el byte '0' al Arduino
-            self.get_logger().info('Enviando "0" al Arduino.')
+            self.get_logger().info('Enviando "0" al Arduino. Detener')
         else:
             self.get_logger().info('Comando desconocido, no se envía nada.')
 
