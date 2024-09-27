@@ -43,6 +43,8 @@ class OffboardControlNode(Node):
 
     def state_callback(self, state):
         self.current_state = state
+        # Añade este log para verificar el estado del dron
+        self.get_logger().debug(f"Current mode: {self.current_state.mode}, armed: {self.current_state.armed}")
 
     def keyboard_callback(self, keyboard):
         self.keyboard = keyboard
@@ -50,6 +52,7 @@ class OffboardControlNode(Node):
 
         if self.keyboard.data == "offboard":
             self.initializing = True  # Start sending initial setpoints
+            self.init_setpoint_count = 0  # Reinicia el contador
         elif self.keyboard.data == "arm":
             self.arm(True)
         elif self.keyboard.data == "disarm":
@@ -60,7 +63,7 @@ class OffboardControlNode(Node):
             self.land()
         elif self.keyboard.data == "return":
             self.return_to_launch()
-        # Movement commands are handled in timer_callback
+        # Los comandos de movimiento se manejan en timer_callback
 
     def set_offboard_mode(self):
         if not self.set_mode_client.wait_for_service(timeout_sec=5.0):
@@ -108,10 +111,11 @@ class OffboardControlNode(Node):
             if self.init_setpoint_count < 100:
                 self.publish_stabilizing_setpoint()
                 self.init_setpoint_count += 1
-                self.get_logger().debug("Sending initial setpoints...")
+                self.get_logger().debug(f"Sending initial setpoints... Count: {self.init_setpoint_count}")
             else:
                 self.initializing = False
                 self.init_setpoint_count = 0
+                self.get_logger().info("Initial setpoints sent. Switching to OFFBOARD mode.")
                 self.set_offboard_mode()  # Cambiamos a modo Offboard después de enviar los setpoints iniciales
         else:
             # Siempre publica setpoints cuando está en modo OFFBOARD
@@ -216,6 +220,8 @@ class OffboardControlNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     offboard_control = OffboardControlNode()
+    # Establece el nivel de logging a DEBUG si deseas ver los mensajes de depuración
+    rclpy.logging.set_logger_level('offboard_control', rclpy.logging.LoggingSeverity.DEBUG)
     try:
         rclpy.spin(offboard_control)
     except KeyboardInterrupt:

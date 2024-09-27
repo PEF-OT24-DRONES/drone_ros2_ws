@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'keyboard_control = drone_control.keyboard_control:main',
-            'offboard_control = drone_control.offboard_control:main'
+            'offboard_control = drone_control.offboard_control:main',
+            'direct_offboard = drone_control.direct_offboard:main',
         ],
     },
 )
