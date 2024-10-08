@@ -1,151 +1,183 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# This is a modified version of the offboard_control.py script that uses the PX4 Offboard Control API
+# to control the drone in offboard mode.
 
 import rclpy
 from rclpy.node import Node
-from mavros_msgs.msg import State, PositionTarget
-from mavros_msgs.srv import SetMode, CommandBool
-from rclpy.qos import QoSPresetProfiles
+import numpy as np
+from rclpy.clock import Clock
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 
-class OffboardTestNode(Node):
+from px4_msgs.msg import OffboardControlMode
+from px4_msgs.msg import TrajectorySetpoint
+from px4_msgs.msg import VehicleStatus
+from px4_msgs.msg import VehicleAttitude
+from px4_msgs.msg import VehicleCommand
+from geometry_msgs.msg import Twist, Vector3
+from math import pi
+from std_msgs.msg import Bool
+
+
+class DirectOffboard(Node):
+
     def __init__(self):
-        super().__init__('offboard_test_node')
-
-        # Publishers and Subscribers
-        qos_profile = QoSPresetProfiles.SENSOR_DATA.value
-        self.state_subscriber = self.create_subscription(
-            State, '/mavros/state', self.state_callback, qos_profile)
-        self.setpoint_publisher = self.create_publisher(
-            PositionTarget, '/mavros/setpoint_raw/local', qos_profile)
-
-        # Service Clients
-        self.set_mode_client = self.create_client(SetMode, '/mavros/set_mode')
-        self.arm_client = self.create_client(CommandBool, '/mavros/cmd/arming')
-
-        # Variables
-        self.current_state = State()
-        self.offboard_setpoint_counter = 0
-
-        # Timer to publish setpoints at 20Hz
-        self.setpoint_timer = self.create_timer(0.05, self.publish_setpoint)
-
-        # Start the offboard control sequence
-        self.offboard_started = False
-        self.get_logger().info("OffboardTestNode has been started.")
-
-        # Futures for service calls
-        self.set_mode_future = None
-        self.arm_future = None
-
-    def state_callback(self, msg):
-        self.current_state = msg
-        self.get_logger().debug(f"Current state - Mode: {self.current_state.mode}, Armed: {self.current_state.armed}")
-
-    def publish_setpoint(self):
-        # Log the current state for debugging
-        self.get_logger().debug(f"Publishing setpoint. Offboard started: {self.offboard_started}, Counter: {self.offboard_setpoint_counter}")
-
-        if not self.offboard_started:
-            # Send initial setpoints to allow transition to Offboard mode
-            if self.offboard_setpoint_counter < 100:
-                self.send_setpoint(0.0, 0.0, 0.0, 0.0)
-                self.offboard_setpoint_counter += 1
-                self.get_logger().debug(f"Sending initial setpoints... Count: {self.offboard_setpoint_counter}")
-            elif self.set_mode_future is None:
-                # After sending initial setpoints, initiate change to Offboard mode
-                self.get_logger().info("Initial setpoints sent. Attempting to switch to Offboard mode.")
-                self.change_to_offboard_mode()
-            elif self.set_mode_future.done():
-                # Process result of set_mode service call
-                try:
-                    response = self.set_mode_future.result()
-                    if response.mode_sent:
-                        self.get_logger().info("Offboard mode set successfully.")
-                        self.get_logger().info("Attempting to arm the drone.")
-                        self.arm_drone()
-                    else:
-                        self.get_logger().error("Failed to set Offboard mode.")
-                    self.set_mode_future = None  # Reset future
-                except Exception as e:
-                    self.get_logger().error(f"SetMode service call failed: {e}")
-                    self.set_mode_future = None  # Reset future
-            elif self.arm_future and self.arm_future.done():
-                # Process result of arm_drone service call
-                try:
-                    response = self.arm_future.result()
-                    if response.success:
-                        self.get_logger().info("Drone armed successfully.")
-                        self.offboard_started = True
-                        self.command_sent_time = self.get_clock().now()
-                    else:
-                        self.get_logger().error("Failed to arm the drone.")
-                    self.arm_future = None  # Reset future
-                except Exception as e:
-                    self.get_logger().error(f"Arm service call failed: {e}")
-                    self.arm_future = None  # Reset future
-            else:
-                # Continue publishing setpoints while waiting
-                self.send_setpoint(0.0, 0.0, 0.0, 0.0)
-        else:
-            # Continue sending setpoints to keep the drone in Offboard mode
-            # Send upward velocity command for a short time
-            elapsed_time = (self.get_clock().now() - self.command_sent_time).nanoseconds / 1e9
-            if elapsed_time < 2.0:
-                # Send upward velocity command
-                self.send_setpoint(0.0, 0.0, 0.5, 0.0)
-                self.get_logger().info(f"Sending upward velocity command. Elapsed time: {elapsed_time:.2f}s")
-            else:
-                # Hold position after 2 seconds
-                self.send_setpoint(0.0, 0.0, 0.0, 0.0)
-                self.get_logger().info("Holding position.")
-
-    def send_setpoint(self, vx, vy, vz, yaw_rate):
-        msg = PositionTarget()
-        msg.coordinate_frame = PositionTarget.FRAME_BODY_NED
-        msg.type_mask = (
-            PositionTarget.IGNORE_PX |
-            PositionTarget.IGNORE_PY |
-            PositionTarget.IGNORE_PZ |
-            PositionTarget.IGNORE_AFX |
-            PositionTarget.IGNORE_AFY |
-            PositionTarget.IGNORE_AFZ |
-            PositionTarget.IGNORE_YAW
+        super().__init__('direct_offboard')
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1
         )
-        msg.velocity.x = vx
-        msg.velocity.y = vy
-        msg.velocity.z = vz
-        msg.yaw_rate = yaw_rate
-        self.setpoint_publisher.publish(msg)
-        self.get_logger().debug(f"Setpoint published: vx={vx}, vy={vy}, vz={vz}, yaw_rate={yaw_rate}")
 
-    def change_to_offboard_mode(self):
-        # Wait for the set_mode service to be available
-        if not self.set_mode_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/set_mode not available")
-            return
-        req = SetMode.Request()
-        req.custom_mode = "OFFBOARD"
-        self.set_mode_future = self.set_mode_client.call_async(req)
+        # Create subscriptions
+        self.status_sub = self.create_subscription(
+            VehicleStatus,
+            '/fmu/out/vehicle_status',
+            self.vehicle_status_callback,
+            qos_profile)
+        
+        self.offboard_velocity_sub = self.create_subscription(
+            Twist,
+            '/offboard_velocity_cmd',
+            self.offboard_velocity_callback,
+            qos_profile)
+        
+        self.attitude_sub = self.create_subscription(
+            VehicleAttitude,
+            '/fmu/out/vehicle_attitude',
+            self.attitude_callback,
+            qos_profile)
+        
+        self.my_bool_sub = self.create_subscription(
+            Bool,
+            '/arm_message',
+            self.arm_message_callback,
+            qos_profile)
 
-    def arm_drone(self):
-        # Wait for the arming service to be available
-        if not self.arm_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/cmd/arming not available")
-            return
-        req = CommandBool.Request()
-        req.value = True
-        self.arm_future = self.arm_client.call_async(req)
+
+        # Create publishers
+        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
+        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
+        self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
+
+        # Arm timer
+        arm_timer_period = 0.1  # seconds
+        self.arm_timer_ = self.create_timer(arm_timer_period, self.arm_timer_callback)
+
+        # Command loop timer
+        timer_period = 0.02  # seconds
+        self.timer = self.create_timer(timer_period, self.cmdloop_callback)
+
+        # Internal state variables
+        self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
+        self.arm_state = VehicleStatus.ARMING_STATE_DISARMED
+        self.velocity = Vector3()
+        self.yaw = 0.0
+        self.trueYaw = 0.0
+        self.offboardMode = False
+        self.arm_message = False
+        self.current_state = "IDLE"
+        self.last_state = self.current_state
+
+
+    def arm_message_callback(self, msg):
+        self.arm_message = msg.data
+        self.get_logger().info(f"Arm Message: {self.arm_message}")
+
+    def arm_timer_callback(self):
+        # State machine
+        match self.current_state:
+            case "IDLE":
+                if self.arm_message:
+                    self.current_state = "OFFBOARD"
+                    self.get_logger().info("Switching to Offboard Mode")
+
+            case "OFFBOARD":
+                if self.arm_state != VehicleStatus.ARMING_STATE_ARMED:
+                    self.state_offboard()
+                    self.get_logger().info("Setting Offboard Mode")
+                else:
+                    self.current_state = "ARMING"
+                    self.get_logger().info("Switching to Arming")
+
+            case "ARMING":
+                if self.arm_state != VehicleStatus.ARMING_STATE_ARMED:
+                    self.arm()  # Send arm command
+                else:
+                    self.current_state = "MOVING"
+                    self.get_logger().info("Drone is armed, starting to move motors")
+
+            case "MOVING":
+                self.move_motors()
+                self.get_logger().info("Moving motors slightly")
+
+        # Log state changes
+        if self.last_state != self.current_state:
+            self.last_state = self.current_state
+            self.get_logger().info(f"State: {self.current_state}")
+
+    def state_offboard(self):
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1., 6.)
+        self.offboardMode = True
+
+    def arm(self):
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+        self.get_logger().info("Arm command sent")
+
+    def move_motors(self):
+        trajectory_msg = TrajectorySetpoint()
+        trajectory_msg.timestamp = int(Clock().now().nanoseconds / 1000)
+        trajectory_msg.velocity[0] = 0.5  # Slight forward movement (in meters/second)
+        trajectory_msg.velocity[1] = 0.0
+        trajectory_msg.velocity[2] = 0.0
+        trajectory_msg.yaw = 0.0
+        self.publisher_trajectory.publish(trajectory_msg)
+        self.get_logger().info("Sent small velocity command to move motors")
+
+    def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
+        msg = VehicleCommand()
+        msg.param1 = param1
+        msg.param2 = param2
+        msg.command = command
+        msg.target_system = 1
+        msg.target_component = 1
+        msg.source_system = 1
+        msg.source_component = 1
+        msg.from_external = True
+        msg.timestamp = int(Clock().now().nanoseconds / 1000)
+        self.vehicle_command_publisher_.publish(msg)
+
+    def vehicle_status_callback(self, msg):
+        self.nav_state = msg.nav_state
+        self.arm_state = msg.arming_state
+
+    def offboard_velocity_callback(self, msg):
+        self.velocity.x = -msg.linear.y
+        self.velocity.y = msg.linear.x
+        self.velocity.z = -msg.linear.z
+        self.yaw = msg.angular.z
+
+    def attitude_callback(self, msg):
+        orientation_q = msg.q
+        self.trueYaw = -np.arctan2(
+            2.0 * (orientation_q[3] * orientation_q[0] + orientation_q[1] * orientation_q[2]),
+            1.0 - 2.0 * (orientation_q[0] ** 2 + orientation_q[1] ** 2)
+        )
+
+    def cmdloop_callback(self):
+        if self.offboardMode:
+            offboard_msg = OffboardControlMode()
+            offboard_msg.timestamp = int(Clock().now().nanoseconds / 1000)
+            offboard_msg.velocity = True
+            self.publisher_offboard_mode.publish(offboard_msg)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = OffboardTestNode()
-    # Set logging level to DEBUG to see detailed logs
-    rclpy.logging.set_logger_level('offboard_test_node', rclpy.logging.LoggingSeverity.DEBUG)
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    node.destroy_node()
+    offboard_control = DirectOffboard()
+    rclpy.spin(offboard_control)
+    offboard_control.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
