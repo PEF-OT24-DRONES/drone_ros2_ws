@@ -1,0 +1,62 @@
+[0.063s] Invoking command in '/home/ubuntu/drone_ros2_ws/src/build/px4_msgs': CMAKE_PREFIX_PATH=/home/ubuntu/drone_ros2_ws/install/drone_control:/home/ubuntu/drone_ros2_ws/install/charging_station:/home/ubuntu/drone_ros2_ws/install/aruco_detection:/opt/ros/humble /usr/bin/cmake --build /home/ubuntu/drone_ros2_ws/src/build/px4_msgs -- -j4 -l4
+[4.135s] [  0%] Built target px4_msgs__cpp
+[4.388s] [ 12%] Built target px4_msgs__rosidl_generator_c
+[4.666s] [ 12%] Built target ament_cmake_python_copy_px4_msgs
+[4.710s] [ 24%] Built target px4_msgs__rosidl_typesupport_cpp
+[4.885s] [ 36%] Built target px4_msgs__rosidl_typesupport_fastrtps_cpp
+[5.097s] [ 49%] Built target px4_msgs__rosidl_typesupport_introspection_cpp
+[5.235s] [ 62%] Built target px4_msgs__rosidl_typesupport_introspection_c
+[5.260s] [ 75%] Built target px4_msgs__rosidl_typesupport_c
+[5.430s] [ 88%] Built target px4_msgs__rosidl_typesupport_fastrtps_c
+[5.559s] [ 88%] Built target px4_msgs
+[5.749s] [ 88%] Built target px4_msgs__py
+[6.302s] [100%] Built target px4_msgs__rosidl_generator_py
+[6.425s] [100%] [32mBuilding C object CMakeFiles/px4_msgs__rosidl_typesupport_fastrtps_c__pyext.dir/rosidl_generator_py/px4_msgs/_px4_msgs_s.ep.rosidl_typesupport_fastrtps_c.c.o[0m
+[6.442s] [100%] [32mBuilding C object CMakeFiles/px4_msgs__rosidl_typesupport_c__pyext.dir/rosidl_generator_py/px4_msgs/_px4_msgs_s.ep.rosidl_typesupport_c.c.o[0m
+[6.478s] [100%] [32mBuilding C object CMakeFiles/px4_msgs__rosidl_typesupport_introspection_c__pyext.dir/rosidl_generator_py/px4_msgs/_px4_msgs_s.ep.rosidl_typesupport_introspection_c.c.o[0m
+[6.915s] running egg_info
+[7.066s] writing px4_msgs.egg-info/PKG-INFO
+[7.071s] writing dependency_links to px4_msgs.egg-info/dependency_links.txt
+[7.075s] writing top-level names to px4_msgs.egg-info/top_level.txt
+[7.654s] reading manifest file 'px4_msgs.egg-info/SOURCES.txt'
+[7.772s] Traceback (most recent call last):
+[7.773s]   File "/home/ubuntu/drone_ros2_ws/src/build/px4_msgs/ament_cmake_python/px4_msgs/setup.py", line 4, in <module>
+[7.775s]     setup(
+[7.775s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/__init__.py", line 117, in setup
+[7.777s]     return distutils.core.setup(**attrs)
+[7.777s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_distutils/core.py", line 183, in setup
+[7.780s]     return run_commands(dist)
+[7.781s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_distutils/core.py", line 199, in run_commands
+[7.782s]     dist.run_commands()
+[7.783s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_distutils/dist.py", line 954, in run_commands
+[7.785s]     self.run_command(cmd)
+[7.786s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/dist.py", line 950, in run_command
+[7.788s]     super().run_command(command)
+[7.789s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_distutils/dist.py", line 973, in run_command
+[7.791s]     cmd_obj.run()
+[7.792s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/command/egg_info.py", line 311, in run
+[7.794s]     self.find_sources()
+[7.795s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/command/egg_info.py", line 319, in find_sources
+[7.796s]     mm.run()
+[7.804s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/command/egg_info.py", line 545, in run
+[7.805s]     self.prune_file_list()
+[7.813s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/command/sdist.py", line 161, in prune_file_list
+[7.814s]     super().prune_file_list()
+[7.815s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_distutils/command/sdist.py", line 380, in prune_file_list
+[7.816s]     base_dir = self.distribution.get_fullname()
+[7.816s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_core_metadata.py", line 267, in get_fullname
+[7.817s]     return _distribution_fullname(self.get_name(), self.get_version())
+[7.818s]   File "/home/ubuntu/.local/lib/python3.10/site-packages/setuptools/_core_metadata.py", line 285, in _distribution_fullname
+[7.829s]     canonicalize_version(version, strip_trailing_zero=False),
+[7.834s] TypeError: canonicalize_version() got an unexpected keyword argument 'strip_trailing_zero'
+[8.015s] gmake[2]: *** [CMakeFiles/ament_cmake_python_build_px4_msgs_egg.dir/build.make:70: CMakeFiles/ament_cmake_python_build_px4_msgs_egg] Error 1
+[8.016s] gmake[1]: *** [CMakeFiles/Makefile2:447: CMakeFiles/ament_cmake_python_build_px4_msgs_egg.dir/all] Error 2
+[8.017s] gmake[1]: *** Waiting for unfinished jobs....
+[11.797s] [100%] [32m[1mLinking C shared library rosidl_generator_py/px4_msgs/px4_msgs_s__rosidl_typesupport_c.cpython-310-aarch64-linux-gnu.so[0m
+[11.858s] [100%] [32m[1mLinking C shared library rosidl_generator_py/px4_msgs/px4_msgs_s__rosidl_typesupport_fastrtps_c.cpython-310-aarch64-linux-gnu.so[0m
+[11.960s] [100%] [32m[1mLinking C shared library rosidl_generator_py/px4_msgs/px4_msgs_s__rosidl_typesupport_introspection_c.cpython-310-aarch64-linux-gnu.so[0m
+[12.193s] [100%] Built target px4_msgs__rosidl_typesupport_c__pyext
+[12.247s] [100%] Built target px4_msgs__rosidl_typesupport_fastrtps_c__pyext
+[12.338s] [100%] Built target px4_msgs__rosidl_typesupport_introspection_c__pyext
+[12.343s] gmake: *** [Makefile:146: all] Error 2
+[12.355s] Invoked command in '/home/ubuntu/drone_ros2_ws/src/build/px4_msgs' returned '2': CMAKE_PREFIX_PATH=/home/ubuntu/drone_ros2_ws/install/drone_control:/home/ubuntu/drone_ros2_ws/install/charging_station:/home/ubuntu/drone_ros2_ws/install/aruco_detection:/opt/ros/humble /usr/bin/cmake --build /home/ubuntu/drone_ros2_ws/src/build/px4_msgs -- -j4 -l4

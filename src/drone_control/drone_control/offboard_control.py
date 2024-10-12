@@ -1,231 +1,120 @@
-#!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
-from mavros_msgs.srv import SetMode, CommandBool
-from mavros_msgs.msg import State, PositionTarget
-from std_msgs.msg import String
-import math
-from rclpy.qos import QoSPresetProfiles
+from px4_msgs.msg import (
+    VehicleCommand,
+    OffboardControlMode,
+    TrajectorySetpoint,
+    TimesyncStatus,
+)
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+import time
 
-class OffboardControlNode(Node):
-    """Node for controlling the drone in offboard mode."""
-
+class OffboardControl(Node):
     def __init__(self):
         super().__init__('offboard_control')
+        
+        qos = QoSProfile(depth=10)
+        qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
-        qos_profile = QoSPresetProfiles.SENSOR_DATA.value
+        # Publishers
+        self.offboard_control_mode_publisher = self.create_publisher(
+            OffboardControlMode,
+            '/fmu/in/offboard_control_mode',
+            qos)
+        self.trajectory_setpoint_publisher = self.create_publisher(
+            TrajectorySetpoint,
+            '/fmu/in/trajectory_setpoint',
+            qos)
+        self.vehicle_command_publisher = self.create_publisher(
+            VehicleCommand,
+            '/fmu/in/vehicle_command',
+            qos)
 
-        # Publishers and Subscribers
-        self.setpoint_publisher = self.create_publisher(
-            PositionTarget, '/mavros/setpoint_raw/local', qos_profile)
-        self.state_subscriber = self.create_subscription(
-            State, '/mavros/state', self.state_callback, qos_profile)
-        self.keyboard_subscriber = self.create_subscription(
-            String, "keyboard", self.keyboard_callback, 10)
+        # Subscription to TimesyncStatus with adjusted QoS
+        self.timesync_sub = self.create_subscription(
+            TimesyncStatus,
+            '/fmu/out/timesync_status',
+            self.timesync_callback,
+            qos)
 
-        # Service Clients
-        self.set_mode_client = self.create_client(SetMode, '/mavros/set_mode')
-        self.arm_client = self.create_client(CommandBool, '/mavros/cmd/arming')
+        self.timestamp = 0
 
-        # Variables
-        self.current_state = State()
-        self.keyboard = String()
-        self.keyboard.data = "none"
-        self.v = 1.0  # Velocity magnitude
-        self.initializing = False
-        self.init_setpoint_count = 0
+        # Timer
+        timer_period = 0.05  # 20 Hz
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.offboard_setpoint_counter = 0
 
-        # Timer to publish setpoints at 20Hz
-        self.timer = self.create_timer(0.05, self.timer_callback)
-
-        self.get_logger().info("OffboardControlNode has been started.")
-
-    def state_callback(self, state):
-        self.current_state = state
-        # Añade este log para verificar el estado del dron
-        self.get_logger().debug(f"Current mode: {self.current_state.mode}, armed: {self.current_state.armed}")
-
-    def keyboard_callback(self, keyboard):
-        self.keyboard = keyboard
-        self.get_logger().info(f"Received keyboard command: {self.keyboard.data}")
-
-        if self.keyboard.data == "offboard":
-            self.initializing = True  # Start sending initial setpoints
-            self.init_setpoint_count = 0  # Reinicia el contador
-        elif self.keyboard.data == "arm":
-            self.arm(True)
-        elif self.keyboard.data == "disarm":
-            self.arm(False)
-        elif self.keyboard.data == "takeoff":
-            self.takeoff()
-        elif self.keyboard.data == "land":
-            self.land()
-        elif self.keyboard.data == "return":
-            self.return_to_launch()
-        # Los comandos de movimiento se manejan en timer_callback
-
-    def set_offboard_mode(self):
-        if not self.set_mode_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/set_mode not available")
-            return
-
-        req = SetMode.Request()
-        req.custom_mode = "OFFBOARD"
-        future = self.set_mode_client.call_async(req)
-        future.add_done_callback(self.set_mode_response_callback)
-
-    def set_mode_response_callback(self, future):
-        try:
-            response = future.result()
-            if response.mode_sent:
-                self.get_logger().info("OFFBOARD mode set successfully.")
-            else:
-                self.get_logger().error("Failed to set OFFBOARD mode.")
-        except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
-
-    def arm(self, arm_status):
-        if not self.arm_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/cmd/arming not available")
-            return
-
-        req = CommandBool.Request()
-        req.value = arm_status
-        future = self.arm_client.call_async(req)
-        future.add_done_callback(self.arm_response_callback)
-
-    def arm_response_callback(self, future):
-        try:
-            response = future.result()
-            if response.success:
-                self.get_logger().info("Arm status changed successfully.")
-            else:
-                self.get_logger().error("Failed to change arm status.")
-        except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
+    def timesync_callback(self, msg):
+        # Usar el timestamp proporcionado por TimesyncStatus
+        self.timestamp = msg.timestamp
 
     def timer_callback(self):
-        # Si estamos inicializando, enviamos setpoints iniciales
-        if self.initializing:
-            if self.init_setpoint_count < 100:
-                self.publish_stabilizing_setpoint()
-                self.init_setpoint_count += 1
-                self.get_logger().debug(f"Sending initial setpoints... Count: {self.init_setpoint_count}")
-            else:
-                self.initializing = False
-                self.init_setpoint_count = 0
-                self.get_logger().info("Initial setpoints sent. Switching to OFFBOARD mode.")
-                self.set_offboard_mode()  # Cambiamos a modo Offboard después de enviar los setpoints iniciales
-        else:
-            # Siempre publica setpoints cuando está en modo OFFBOARD
-            if self.current_state.mode == "OFFBOARD":
-                if self.keyboard.data == "right":
-                    self.publish_movement_setpoint(self.v, 0.0, 0.0, 0.0)
-                elif self.keyboard.data == "left":
-                    self.publish_movement_setpoint(-self.v, 0.0, 0.0, 0.0)
-                elif self.keyboard.data == "front":
-                    self.publish_movement_setpoint(0.0, self.v, 0.0, 0.0)
-                elif self.keyboard.data == "back":
-                    self.publish_movement_setpoint(0.0, -self.v, 0.0, 0.0)
-                elif self.keyboard.data == "up":
-                    self.publish_movement_setpoint(0.0, 0.0, self.v, 0.0)
-                elif self.keyboard.data == "down":
-                    self.publish_movement_setpoint(0.0, 0.0, -self.v, 0.0)
-                elif self.keyboard.data == "rotate_right":
-                    self.publish_movement_setpoint(0.0, 0.0, 0.0, math.pi / 8)
-                elif self.keyboard.data == "rotate_left":
-                    self.publish_movement_setpoint(0.0, 0.0, 0.0, -math.pi / 8)
-                else:
-                    # Si no hay comando de movimiento, mantén la posición
-                    self.publish_stabilizing_setpoint()
-            else:
-                # Si no está en modo OFFBOARD, envía setpoints para prepararlo
-                self.publish_stabilizing_setpoint()
+        if self.timestamp == 0:
+            return  # Esperar a tener un timestamp válido
 
-    def publish_stabilizing_setpoint(self):
-        msg = PositionTarget()
-        msg.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
-        msg.type_mask = (
-            PositionTarget.IGNORE_PX | PositionTarget.IGNORE_PY | PositionTarget.IGNORE_PZ |
-            PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ |
-            PositionTarget.IGNORE_YAW_RATE
-        )
-        msg.velocity.x = 0.0
-        msg.velocity.y = 0.0
-        msg.velocity.z = 0.0
-        msg.yaw = 0.0
-        self.setpoint_publisher.publish(msg)
+        # Publicar los mensajes OffboardControlMode y TrajectorySetpoint
+        self.publish_offboard_control_mode()
+        self.publish_trajectory_setpoint()
 
-    def publish_movement_setpoint(self, x, y, z, yaw):
-        msg = PositionTarget()
-        msg.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
-        msg.type_mask = (
-            PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ |
-            PositionTarget.IGNORE_PX | PositionTarget.IGNORE_PY | PositionTarget.IGNORE_PZ |
-            PositionTarget.IGNORE_YAW_RATE
-        )
-        msg.velocity.x = x
-        msg.velocity.y = y
-        msg.velocity.z = z
-        msg.yaw = yaw
-        self.setpoint_publisher.publish(msg)
+        # Solo intenta cambiar al modo Offboard y armar después de 50 mensajes enviados
+        if self.offboard_setpoint_counter == 150:
+            # Después de publicar suficientes mensajes, cambiar al modo Offboard
+            self.send_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1=1.0, param2=6.0)
+            self.get_logger().info('Comando para cambiar a modo Offboard enviado')
 
-    def takeoff(self):
-        # Implementa la lógica de despegue si es necesario
-        pass
+        # Intenta armar después de 60 mensajes, para asegurar que el modo Offboard esté activo
+        if self.offboard_setpoint_counter == 190:
+            self.arm()
+            self.get_logger().info('Comando de armado enviado')
 
-    def land(self):
-        if not self.set_mode_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/set_mode not available")
-            return
+        self.offboard_setpoint_counter += 1
 
-        req = SetMode.Request()
-        req.custom_mode = "AUTO.LAND"
+    def publish_offboard_control_mode(self):
+        msg = OffboardControlMode()
+        msg.timestamp = self.timestamp
+        msg.position = True
+        msg.velocity = False
+        msg.acceleration = False
+        msg.attitude = False
+        msg.body_rate = False
+        self.offboard_control_mode_publisher.publish(msg)
 
-        future = self.set_mode_client.call_async(req)
-        future.add_done_callback(self.land_response_callback)
+    def publish_trajectory_setpoint(self):
+        msg = TrajectorySetpoint()
+        msg.timestamp = self.timestamp
+        msg.position = [0.0, 0.0, -5.0]  # Mantener posición actual en XY, descender a -5m en Z
+        msg.velocity = [0.0, 0.0, 0.0]  # Sin movimiento adicional
+        msg.yaw = 0.0  # Orientación en yaw
+        self.trajectory_setpoint_publisher.publish(msg)
 
-    def land_response_callback(self, future):
-        try:
-            response = future.result()
-            if response.mode_sent:
-                self.get_logger().info("Landing command sent successfully.")
-            else:
-                self.get_logger().error("Failed to send landing command.")
-        except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
+    def arm(self):
+        self.send_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
 
-    def return_to_launch(self):
-        if not self.set_mode_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Service /mavros/set_mode not available")
-            return
+    def disarm(self):
+        self.send_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
 
-        req = SetMode.Request()
-        req.custom_mode = "AUTO.RTL"
-
-        future = self.set_mode_client.call_async(req)
-        future.add_done_callback(self.rtl_response_callback)
-
-    def rtl_response_callback(self, future):
-        try:
-            response = future.result()
-            if response.mode_sent:
-                self.get_logger().info("Return to Launch command sent successfully.")
-            else:
-                self.get_logger().error("Failed to send RTL command.")
-        except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
+    def send_vehicle_command(self, command, param1=0.0, param2=0.0):
+        msg = VehicleCommand()
+        msg.timestamp = self.timestamp
+        msg.param1 = param1
+        msg.param2 = param2
+        msg.command = command
+        msg.target_system = 1
+        msg.target_component = 1
+        msg.source_system = 1
+        msg.source_component = 1
+        msg.from_external = True
+        self.vehicle_command_publisher.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)
-    offboard_control = OffboardControlNode()
-    # Establece el nivel de logging a DEBUG si deseas ver los mensajes de depuración
-    rclpy.logging.set_logger_level('offboard_control', rclpy.logging.LoggingSeverity.DEBUG)
+    offboard_control = OffboardControl()
+
     try:
         rclpy.spin(offboard_control)
     except KeyboardInterrupt:
         pass
+
     offboard_control.destroy_node()
     rclpy.shutdown()
 

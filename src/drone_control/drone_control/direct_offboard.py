@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-# This is a modified version of the offboard_control.py script that uses the PX4 Offboard Control API
-# to control the drone in offboard mode.
+# Modified version with enhanced debugging and a different strategy for switching to offboard mode,
+# arming the drone, and moving the motors.
 
 import rclpy
 from rclpy.node import Node
@@ -14,7 +14,6 @@ from px4_msgs.msg import VehicleStatus
 from px4_msgs.msg import VehicleAttitude
 from px4_msgs.msg import VehicleCommand
 from geometry_msgs.msg import Twist, Vector3
-from math import pi
 from std_msgs.msg import Bool
 
 
@@ -42,87 +41,67 @@ class DirectOffboard(Node):
             self.offboard_velocity_callback,
             qos_profile)
         
-        self.attitude_sub = self.create_subscription(
-            VehicleAttitude,
-            '/fmu/out/vehicle_attitude',
-            self.attitude_callback,
-            qos_profile)
-        
         self.my_bool_sub = self.create_subscription(
             Bool,
             '/arm_message',
             self.arm_message_callback,
             qos_profile)
 
-
         # Create publishers
         self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
         self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
 
-        # Arm timer
-        arm_timer_period = 0.1  # seconds
-        self.arm_timer_ = self.create_timer(arm_timer_period, self.arm_timer_callback)
-
         # Command loop timer
-        timer_period = 0.02  # seconds
+        timer_period = 0.1  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
 
         # Internal state variables
         self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
         self.arm_state = VehicleStatus.ARMING_STATE_DISARMED
-        self.velocity = Vector3()
-        self.yaw = 0.0
-        self.trueYaw = 0.0
         self.offboardMode = False
         self.arm_message = False
-        self.current_state = "IDLE"
-        self.last_state = self.current_state
-
+        self.has_armed = False
+        self.velocity = Vector3()
 
     def arm_message_callback(self, msg):
         self.arm_message = msg.data
-        self.get_logger().info(f"Arm Message: {self.arm_message}")
+        self.get_logger().info(f"[DEBUG] Received arm message: {self.arm_message}")
 
-    def arm_timer_callback(self):
-        # State machine
-        match self.current_state:
-            case "IDLE":
-                if self.arm_message:
-                    self.current_state = "OFFBOARD"
-                    self.get_logger().info("Switching to Offboard Mode")
+    def vehicle_status_callback(self, msg):
+        self.nav_state = msg.nav_state
+        self.arm_state = msg.arming_state
+        self.get_logger().info(f"[DEBUG] NAV_STATE: {self.nav_state}, ARM_STATE: {self.arm_state}")
 
-            case "OFFBOARD":
-                if self.arm_state != VehicleStatus.ARMING_STATE_ARMED:
-                    self.state_offboard()
-                    self.get_logger().info("Setting Offboard Mode")
-                else:
-                    self.current_state = "ARMING"
-                    self.get_logger().info("Switching to Arming")
+    def offboard_velocity_callback(self, msg):
+        # This callback is for receiving velocity commands if needed
+        self.get_logger().info(f"[DEBUG] Received velocity command: {msg}")
 
-            case "ARMING":
-                if self.arm_state != VehicleStatus.ARMING_STATE_ARMED:
-                    self.arm()  # Send arm command
-                else:
-                    self.current_state = "MOVING"
-                    self.get_logger().info("Drone is armed, starting to move motors")
+    def cmdloop_callback(self):
+        # Step 1: Switch to Offboard Mode if requested and not already in offboard mode
+        if self.arm_message and not self.offboardMode:
+            self.get_logger().info("[DEBUG] Attempting to switch to offboard mode")
+            self.state_offboard()
 
-            case "MOVING":
-                self.move_motors()
-                self.get_logger().info("Moving motors slightly")
+        # Step 2: If in Offboard mode, attempt to arm
+        if self.offboardMode and self.arm_state != VehicleStatus.ARMING_STATE_ARMED and not self.has_armed:
+            self.get_logger().info("[DEBUG] Attempting to arm the drone")
+            self.arm()
 
-        # Log state changes
-        if self.last_state != self.current_state:
-            self.last_state = self.current_state
-            self.get_logger().info(f"State: {self.current_state}")
+        # Step 3: If armed, send a small movement command
+        if self.arm_state == VehicleStatus.ARMING_STATE_ARMED and not self.has_armed:
+            self.get_logger().info("[DEBUG] Drone is armed, sending movement command")
+            self.move_motors()
+            self.has_armed = True
 
     def state_offboard(self):
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1., 6.)
         self.offboardMode = True
+        self.get_logger().info("[DEBUG] Offboard mode command sent")
 
     def arm(self):
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-        self.get_logger().info("Arm command sent")
+        self.get_logger().info("[DEBUG] Arm command sent")
 
     def move_motors(self):
         trajectory_msg = TrajectorySetpoint()
@@ -132,7 +111,7 @@ class DirectOffboard(Node):
         trajectory_msg.velocity[2] = 0.0
         trajectory_msg.yaw = 0.0
         self.publisher_trajectory.publish(trajectory_msg)
-        self.get_logger().info("Sent small velocity command to move motors")
+        self.get_logger().info("[DEBUG] Sent small velocity command to move motors")
 
     def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
@@ -146,30 +125,7 @@ class DirectOffboard(Node):
         msg.from_external = True
         msg.timestamp = int(Clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher_.publish(msg)
-
-    def vehicle_status_callback(self, msg):
-        self.nav_state = msg.nav_state
-        self.arm_state = msg.arming_state
-
-    def offboard_velocity_callback(self, msg):
-        self.velocity.x = -msg.linear.y
-        self.velocity.y = msg.linear.x
-        self.velocity.z = -msg.linear.z
-        self.yaw = msg.angular.z
-
-    def attitude_callback(self, msg):
-        orientation_q = msg.q
-        self.trueYaw = -np.arctan2(
-            2.0 * (orientation_q[3] * orientation_q[0] + orientation_q[1] * orientation_q[2]),
-            1.0 - 2.0 * (orientation_q[0] ** 2 + orientation_q[1] ** 2)
-        )
-
-    def cmdloop_callback(self):
-        if self.offboardMode:
-            offboard_msg = OffboardControlMode()
-            offboard_msg.timestamp = int(Clock().now().nanoseconds / 1000)
-            offboard_msg.velocity = True
-            self.publisher_offboard_mode.publish(offboard_msg)
+        self.get_logger().info(f"[DEBUG] Published vehicle command: {command} with params {param1}, {param2}")
 
 def main(args=None):
     rclpy.init(args=args)

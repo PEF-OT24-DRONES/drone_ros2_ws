@@ -28,7 +28,7 @@ class SerialMotorSubscriber(Node):
             self.ser.write(b'1')  # Envía el byte '1' al Arduino
             self.get_logger().info('Enviando "1" al Arduino. Adelante')
         elif msg.data == '2':
-            self.ser.write(b'2')  # Envía el byte '0' al Arduino
+            self.ser.write(b'2')  # Envía el byte '2' al Arduino
             self.get_logger().info('Enviando "2" al Arduino. Reversa')
         elif msg.data == '0':
             self.ser.write(b'0')  # Envía el byte '0' al Arduino
