@@ -19,8 +19,11 @@ class ArucoPoseDetectionNode(Node):
             10)
 
         # Load camera parameters for pose estimation
-        self.camera_matrix = np.array([[1000, 0, 320], [0, 1000, 240], [0, 0, 1]], dtype=np.float32)  # Example calibration data
-        self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)  # Example assuming no lens distortion
+        self.camera_matrix = np.array([[1.01112869e+03, 0, 6.25027187e+02], 
+                                       [0, 1.00939931e+03, 3.55205263e+02], 
+                                       [0, 0, 1]], dtype=np.float32)
+        self.dist_coeffs = np.array([-0.0031836, -0.10976409, 0.00019764, 
+                                     -0.001902, -0.13254417])
 
         # Define the ArUco dictionary and parameters
         self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
@@ -29,7 +32,8 @@ class ArucoPoseDetectionNode(Node):
         # IDs for inner and outer markers
         self.inner_marker_id = 100
         self.outer_marker_id = 5
-        self.marker_size = 0.185  # Marker size in meters
+        self.inner_marker_size = 0.05  # Inner marker size in meters (5 cm)
+        self.outer_marker_size = 0.21  # Outer marker size in meters (21 cm)
 
         self.get_logger().info('Aruco Pose Detection Node has been started')
 
@@ -65,57 +69,79 @@ class ArucoPoseDetectionNode(Node):
             # Decode the image
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+            # Resize the image
+            frame = cv2.resize(frame, (320, 240))
+
+            #Convertir a gris
+            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
             if frame is not None:
                 # Convert to grayscale for ArUco detection
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
                 # Detect ArUco markers
-                corners, ids, rejected = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
+                corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
 
                 if ids is not None:
-                    # Check if inner or outer marker is detected
-                    marker_id = None
-                    if self.inner_marker_id in ids:
-                        marker_id = self.inner_marker_id
-                    elif self.outer_marker_id in ids:
-                        marker_id = self.outer_marker_id
+                    # Process each detected marker
+                    for i, marker_id in enumerate(ids.flatten()):
+                        # Determine the size based on the marker ID
+                        if marker_id == self.inner_marker_id:
+                            marker_size = self.inner_marker_size
+                            axis_length = self.inner_marker_size / 2
+                        elif marker_id == self.outer_marker_id:
+                            marker_size = self.outer_marker_size
+                            axis_length = self.outer_marker_size / 2
+                        else:
+                            continue  # Skip any markers that are not inner or outer
 
-                    if marker_id is not None:
-                        # Get index of the detected marker
-                        index = np.where(ids == marker_id)[0][0]
-                        
+                        # Get the corresponding corners
+                        corners_single = [corners[i]]
+
                         # Estimate pose of the detected marker
-                        ret = aruco.estimatePoseSingleMarkers([corners[index]], self.marker_size, self.camera_matrix, self.dist_coeffs)
+                        ret = aruco.estimatePoseSingleMarkers(
+                            corners_single, marker_size, self.camera_matrix, self.dist_coeffs)
                         rvec, tvec = ret[0][0, 0, :], ret[1][0, 0, :]
+                        print("rvec: ",rvec)
+                        print("tvec: ",tvec)
 
                         # Draw the marker
-                        aruco.drawDetectedMarkers(frame, [corners[index]])
+                        aruco.drawDetectedMarkers(frame_gray, corners_single)
 
                         # Manually project the axes on the image
-                        axis_length = 0.1  # Axis length in meters
-                        axis = np.float32([[axis_length, 0, 0], [0, axis_length, 0], [0, 0, axis_length]]).reshape(-1, 3)
+                        
+                        #axis_length = 0.1  # Axis length in meters
+                        axis = np.float32([[axis_length, 0, 0], 
+                                           [0, axis_length, 0], 
+                                           [0, 0, axis_length]]).reshape(-1, 3)
 
                         # Project 3D points to the image plane
-                        imgpts, jac = cv2.projectPoints(axis, rvec, tvec, self.camera_matrix, self.dist_coeffs)
+                        imgpts, jac = cv2.projectPoints(
+                            axis, rvec, tvec, self.camera_matrix, self.dist_coeffs)
                         imgpts = np.int32(imgpts).reshape(-1, 2)
 
                         # Draw the axis lines on the marker
-                        corner = tuple(corners[index][0].mean(axis=0).astype(int))  # Use the marker center as origin
-                        frame = cv2.line(frame, corner, tuple(imgpts[0]), (255, 0, 0), 5)  # X-axis (Red)
-                        frame = cv2.line(frame, corner, tuple(imgpts[1]), (0, 255, 0), 5)  # Y-axis (Green)
-                        frame = cv2.line(frame, corner, tuple(imgpts[2]), (0, 0, 255), 5)  # Z-axis (Blue)
+                        corner = tuple(corners_single[0][0].mean(axis=0).astype(int))  # Use the marker center as origin
+                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[0]), (255, 0, 0), 5)  # X-axis (Red)
+                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[1]), (123, 255, 0), 5)  # Y-axis (Green)
+                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[2]), (0, 0, 255), 5)  # Z-axis (Blue)
 
                         # Print position and attitude of the marker
-                        self.get_logger().info(f"MARKER {marker_id} Position x={tvec[0]:.2f} m, y={tvec[1]:.2f} m, z={tvec[2]:.2f} m")
+                        self.get_logger().info(
+                            f"MARKER {marker_id} Position x={tvec[0]:.2f} m, y={tvec[1]:.2f} m, z={tvec[2]:.2f} m"
+                        )
 
                         R_ct = np.matrix(cv2.Rodrigues(rvec)[0])
                         R_tc = R_ct.T
 
                         roll_marker, pitch_marker, yaw_marker = self.rotationMatrixToEulerAngles(R_tc)
-                        self.get_logger().info(f"MARKER {marker_id} Attitude roll={math.degrees(roll_marker):.2f} deg, pitch={math.degrees(pitch_marker):.2f} deg, yaw={math.degrees(yaw_marker):.2f} deg")
+                        self.get_logger().info(
+                            f"MARKER {marker_id} Attitude roll={math.degrees(roll_marker):.2f} deg, "
+                            f"pitch={math.degrees(pitch_marker):.2f} deg, yaw={math.degrees(yaw_marker):.2f} deg"
+                        )
 
                 # Display the frame with the detected markers and axes
-                cv2.imshow('Aruco Detection', frame)
+                cv2.imshow('Aruco Detection', frame_gray)
                 cv2.waitKey(1)
 
         except Exception as e:
@@ -134,4 +160,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
