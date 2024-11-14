@@ -11,10 +11,15 @@
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>px4_msgs</depend>
-  <depend>pynput</depend>
-  <depend>example_interfaces</depend>
   <depend>curses</depend>
   <depend>mavros_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>scipy</depend>
+  <depend>numpy</depend>
+  <depend>math</depend>
+  <depend>dronekit</depend>
+  
+
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

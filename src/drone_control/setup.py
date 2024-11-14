@@ -24,6 +24,9 @@ setup(
             'offboard_control = drone_control.offboard_control:main',
             'direct_offboard = drone_control.direct_offboard:main',
             'takeoff = drone_control.takeoff:main',
+            'mavros_node = drone_control.mavros_node:main',
+            'mavros_nogps = drone_control.mavros_nogps:main',
+            'rc_control = drone_control.rc_control:main',
         ],
     },
 )
