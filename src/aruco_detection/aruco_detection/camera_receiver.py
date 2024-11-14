@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
-from cv_bridge import CvBridge
+#from cv_bridge import CvBridge
 import cv2
 import numpy as np
 
@@ -14,7 +14,7 @@ class CameraReceiverNode(Node):
             '/camera_image/compressed',
             self.listener_callback,
             10)
-        self.bridge = CvBridge()
+        #self.bridge = CvBridge()
         self.get_logger().info('Image Subscriber has been started')
 
     def listener_callback(self, msg):
