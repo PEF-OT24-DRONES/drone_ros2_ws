@@ -17,6 +17,8 @@ class ArucoPoseDetectionNode(Node):
             '/camera_image/compressed',
             self.image_callback,
             10)
+        
+        self.publisher = self.create_publisher(CompressedImage, '/aruco_detection/compressed', 10)
 
         # Load camera parameters for pose estimation
         self.camera_matrix = np.array([[1.01112869e+03, 0, 6.25027187e+02], 
@@ -139,6 +141,15 @@ class ArucoPoseDetectionNode(Node):
                             f"MARKER {marker_id} Attitude roll={math.degrees(roll_marker):.2f} deg, "
                             f"pitch={math.degrees(pitch_marker):.2f} deg, yaw={math.degrees(yaw_marker):.2f} deg"
                         )
+
+                # Publish the image with the detected markers
+                msg_out = CompressedImage()
+                msg_out.header.stamp = self.get_clock().now().to_msg()
+                msg_out.format = 'jpeg'
+                _, img_out = cv2.imencode('.jpg', frame_gray)
+                msg_out.data = img_out.tobytes()
+                self.publisher.publish(msg_out)
+                
 
                 # Display the frame with the detected markers and axes
                 cv2.imshow('Aruco Detection', frame_gray)
