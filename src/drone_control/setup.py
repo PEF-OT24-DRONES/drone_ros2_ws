@@ -27,6 +27,7 @@ setup(
             'mavros_node = drone_control.mavros_node:main',
             'mavros_nogps = drone_control.mavros_nogps:main',
             'rc_control = drone_control.rc_control:main',
+            'drone_state = drone_control.drone_state:main',
         ],
     },
 )

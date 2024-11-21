@@ -17,6 +17,8 @@ class ArucoPoseDetectionNode(Node):
             '/camera_image/compressed',
             self.image_callback,
             10)
+        
+        self.publisher = self.create_publisher(CompressedImage, '/aruco_detection/compressed', 10)
 
         # Load camera parameters for pose estimation
         self.camera_matrix = np.array([[1.01112869e+03, 0, 6.25027187e+02], 
@@ -72,77 +74,63 @@ class ArucoPoseDetectionNode(Node):
             # Resize the image
             frame = cv2.resize(frame, (320, 240))
 
-            #Convertir a gris
+            # Convert image to grayscale
             frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            if frame is not None:
-                # Convert to grayscale for ArUco detection
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Detect ArUco markers
+            corners, ids, _ = aruco.detectMarkers(frame_gray, self.aruco_dict, parameters=self.aruco_params)
 
-                # Detect ArUco markers
-                corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
+            if ids is not None:
+                # Process each detected marker
+                for i, marker_id in enumerate(ids.flatten()):
+                    # Determine the size based on the marker ID
+                    if marker_id == self.inner_marker_id:
+                        marker_size = self.inner_marker_size
+                        axis_length = self.inner_marker_size / 2
+                    elif marker_id == self.outer_marker_id:
+                        marker_size = self.outer_marker_size
+                        axis_length = self.outer_marker_size / 2
+                    else:
+                        continue  # Skip any markers that are not inner or outer
 
-                if ids is not None:
-                    # Process each detected marker
-                    for i, marker_id in enumerate(ids.flatten()):
-                        # Determine the size based on the marker ID
-                        if marker_id == self.inner_marker_id:
-                            marker_size = self.inner_marker_size
-                            axis_length = self.inner_marker_size / 2
-                        elif marker_id == self.outer_marker_id:
-                            marker_size = self.outer_marker_size
-                            axis_length = self.outer_marker_size / 2
-                        else:
-                            continue  # Skip any markers that are not inner or outer
+                    # Get the corresponding corners
+                    corners_single = [corners[i]]
 
-                        # Get the corresponding corners
-                        corners_single = [corners[i]]
+                    # Estimate pose of the detected marker
+                    ret = aruco.estimatePoseSingleMarkers(
+                        corners_single, marker_size, self.camera_matrix, self.dist_coeffs)
+                    rvec, tvec = ret[0][0, 0, :], ret[1][0, 0, :]
 
-                        # Estimate pose of the detected marker
-                        ret = aruco.estimatePoseSingleMarkers(
-                            corners_single, marker_size, self.camera_matrix, self.dist_coeffs)
-                        rvec, tvec = ret[0][0, 0, :], ret[1][0, 0, :]
-                        print("rvec: ",rvec)
-                        print("tvec: ",tvec)
+                    # Draw the marker
+                    aruco.drawDetectedMarkers(frame, corners_single)
 
-                        # Draw the marker
-                        aruco.drawDetectedMarkers(frame_gray, corners_single)
+                    # Manually project the axes on the image
+                    axis = np.float32([[axis_length, 0, 0], 
+                                       [0, axis_length, 0], 
+                                       [0, 0, axis_length]]).reshape(-1, 3)
 
-                        # Manually project the axes on the image
-                        
-                        #axis_length = 0.1  # Axis length in meters
-                        axis = np.float32([[axis_length, 0, 0], 
-                                           [0, axis_length, 0], 
-                                           [0, 0, axis_length]]).reshape(-1, 3)
+                    # Project 3D points to the image plane
+                    imgpts, jac = cv2.projectPoints(
+                        axis, rvec, tvec, self.camera_matrix, self.dist_coeffs)
+                    imgpts = np.int32(imgpts).reshape(-1, 2)
 
-                        # Project 3D points to the image plane
-                        imgpts, jac = cv2.projectPoints(
-                            axis, rvec, tvec, self.camera_matrix, self.dist_coeffs)
-                        imgpts = np.int32(imgpts).reshape(-1, 2)
+                    # Draw the axis lines on the marker
+                    corner = tuple(corners_single[0][0].mean(axis=0).astype(int))  # Use the marker center as origin
+                    frame = cv2.line(frame, corner, tuple(imgpts[0]), (255, 0, 0), 2)  # X-axis (Red)
+                    frame = cv2.line(frame, corner, tuple(imgpts[1]), (0, 255, 0), 2)  # Y-axis (Green)
+                    frame = cv2.line(frame, corner, tuple(imgpts[2]), (0, 0, 255), 2)  # Z-axis (Blue)
 
-                        # Draw the axis lines on the marker
-                        corner = tuple(corners_single[0][0].mean(axis=0).astype(int))  # Use the marker center as origin
-                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[0]), (255, 0, 0), 5)  # X-axis (Red)
-                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[1]), (123, 255, 0), 5)  # Y-axis (Green)
-                        frame_gray = cv2.line(frame_gray, corner, tuple(imgpts[2]), (0, 0, 255), 5)  # Z-axis (Blue)
+            # Publish the image with the detected markers
+            msg_out = CompressedImage()
+            msg_out.header.stamp = self.get_clock().now().to_msg()
+            msg_out.format = 'jpeg'
+            _, img_out = cv2.imencode('.jpg', frame)  # Encode the color image
+            msg_out.data = img_out.tobytes()
+            self.publisher.publish(msg_out)
 
-                        # Print position and attitude of the marker
-                        self.get_logger().info(
-                            f"MARKER {marker_id} Position x={tvec[0]:.2f} m, y={tvec[1]:.2f} m, z={tvec[2]:.2f} m"
-                        )
-
-                        R_ct = np.matrix(cv2.Rodrigues(rvec)[0])
-                        R_tc = R_ct.T
-
-                        roll_marker, pitch_marker, yaw_marker = self.rotationMatrixToEulerAngles(R_tc)
-                        self.get_logger().info(
-                            f"MARKER {marker_id} Attitude roll={math.degrees(roll_marker):.2f} deg, "
-                            f"pitch={math.degrees(pitch_marker):.2f} deg, yaw={math.degrees(yaw_marker):.2f} deg"
-                        )
-
-                # Display the frame with the detected markers and axes
-                cv2.imshow('Aruco Detection', frame_gray)
-                cv2.waitKey(1)
+            # Display the frame with the detected markers and axes
+            cv2.imshow('Aruco Detection', frame)
+            cv2.waitKey(1)
 
         except Exception as e:
             self.get_logger().error(f"Error processing the image: {e}")
