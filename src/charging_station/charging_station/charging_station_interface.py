@@ -8,7 +8,7 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QVBoxLayout, QTabWidget, QWidget, QProgressBar, QPushButton, QLineEdit, QHBoxLayout
 )
-
+from mavros_msgs.srv import CommandBool
 from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -109,6 +109,14 @@ class ChargingStationInterface(Node):
             CompressedImage, '/aruco_detection/compressed', self.camera_callback, qos_profile
         )
 
+        # Servicio para armar/desarmar el dron
+        self.arm_client = self.create_client(CommandBool, '/mavros/cmd/arming')
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Esperando al servicio /mavros/cmd/arming...')
+
+        # SUbscriber al charging station status
+        self.subscription_charging = self.create_subscription(String, 'charging_station_status', self.station_listener_callback, qos_profile)
+
         # Variables para almacenar los datos del dron
         self.is_charging = False
         self.battery_percentage = 0.0
@@ -118,8 +126,10 @@ class ChargingStationInterface(Node):
         self.manual_input = False
         self.flight_mode = "UNKNOWN"
         self.latest_frame = None  # Almacena el último frame recibido
+        # Inicializa el estado de la estación de carga
+        self.charging_station_status = "CLOSED"
         # Funciones para los botones de la pestaña del drone
-        
+
 
     def battery_callback(self, msg):
         """Callback para recibir datos de la batería."""
@@ -139,6 +149,29 @@ class ChargingStationInterface(Node):
         frame_gray = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
         self.latest_frame = frame_gray
 
+    def station_listener_callback(self, msg):
+        """Callback para actualizar el estado de la estación de carga."""
+        if msg.data == "OPEN":
+            self.charging_station_status = "OPEN"
+            self.get_logger().info("Charging station is now OPEN.")
+        elif msg.data == "CLOSED":
+            self.charging_station_status = "CLOSED"
+            self.get_logger().info("Charging station is now CLOSED.")
+        else:
+            self.get_logger().warning(f"Unknown station status received: {msg.data}")
+
+    def arm_drone(self):
+        """Método para armar el dron."""
+        arm_cmd = CommandBool.Request()
+        arm_cmd.value = True
+
+        future = self.arm_client.call_async(arm_cmd)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info("Dron armado con éxito.")
+        else:
+            self.get_logger().error("Error al armar el dron.")
 
 class MainWindow(QMainWindow):
     def __init__(self, node):
@@ -152,7 +185,8 @@ class MainWindow(QMainWindow):
 
         self.view_mode = "normal"  # Modo de visualización de la cámara
         self.camera_on = False  # Estado de la cámara
-
+        self.charging_station_status = "CLOSED"
+        
         # Crear el widget de pestañas
         tabs = QTabWidget()
 
@@ -445,7 +479,7 @@ class MainWindow(QMainWindow):
         # Temporizador para la interfaz
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_interface)
-        self.timer.start(100)
+        self.timer.start(10)
 
         # Temporizador para el temporizador del usuario
         self.user_timer = QTimer()
@@ -919,9 +953,13 @@ class MainWindow(QMainWindow):
             self.timer_display.setText("Time's Up!")  # Mensaje final
             self.time_input.setEnabled(True)  # Rehabilita el input
             self.start_timer_button.setEnabled(True)  # Rehabilita el botón
-            self.open_charging()  # Llama a la función para abrir la estación            
-            # Usa QTimer.singleShot para cerrar la estación después de 20 segundos
-            QTimer.singleShot(20000, self.close_charging)
+            
+            # Llama a la función para abrir la estación
+            self.open_charging()
+
+            # Espera hasta que el Arduino confirme que la estación está abierta
+            QTimer.singleShot(10000, self.arm_drone)
+
 
     def open_charging(self):
         """Publica comando para abrir la estación de carga."""
@@ -1092,6 +1130,13 @@ class MainWindow(QMainWindow):
         self.interactive_map.update_map(self.interactive_map.route_points)
         self.route_point_count.setText(f"Points: {len(self.interactive_map.route_points)}")  # Actualiza el contador
         self.command_log.append(f"Added point programmatically at ({x}, {y}).")
+
+    def arm_drone(self):
+        """Conecta el botón con el método del nodo ROS."""
+        self.command_log.append("Sending Arm request")
+        self.node.arm_drone()
+        QTimer.singleShot(20000, self.close_charging)
+
 
 
 def main():
