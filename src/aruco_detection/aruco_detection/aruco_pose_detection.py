@@ -120,6 +120,29 @@ class ArucoPoseDetectionNode(Node):
                     frame = cv2.line(frame, corner, tuple(imgpts[1]), (0, 255, 0), 2)  # Y-axis (Green)
                     frame = cv2.line(frame, corner, tuple(imgpts[2]), (0, 0, 255), 2)  # Z-axis (Blue)
 
+                    # Extract rotation matrix and Euler angles
+                    R_ct = np.matrix(cv2.Rodrigues(rvec)[0])
+                    R_tc = R_ct.T  # Transpose rotation matrix to change coordinate systems
+                    roll_marker, pitch_marker, yaw_marker = self.rotationMatrixToEulerAngles(R_tc)
+
+                    # Log position and attitude of the marker
+                    self.get_logger().info(
+                        f"[Marker {marker_id}] Position (x, y, z): {tvec[0]:.3f}, {tvec[1]:.3f}, {tvec[2]:.3f} meters"
+                    )
+                    self.get_logger().info(
+                        f"[Marker {marker_id}] Attitude (roll, pitch, yaw): "
+                        f"{math.degrees(roll_marker):.2f}°, {math.degrees(pitch_marker):.2f}°, {math.degrees(yaw_marker):.2f}°"
+                    )
+
+                    # Calculate corrections needed to center the drone
+                    x_correction = -tvec[0]  # Lateral adjustment
+                    y_correction = -tvec[1]  # Vertical adjustment
+                    z_correction = -tvec[2]  # Depth adjustment
+
+                    self.get_logger().info(
+                        f"[Marker {marker_id}] Corrections: Move x={x_correction:.3f}m, y={y_correction:.3f}m, z={z_correction:.3f}m"
+                    )
+
             # Publish the image with the detected markers
             msg_out = CompressedImage()
             msg_out.header.stamp = self.get_clock().now().to_msg()
