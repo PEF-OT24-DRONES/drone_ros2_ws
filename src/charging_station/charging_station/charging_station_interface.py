@@ -101,12 +101,18 @@ class ChargingStationInterface(Node):
             State, '/mavros/state', self.state_callback, qos_profile
         )
 
-        # Suscripción al tópico de imagen de la cámara normal
-        self.subscription_camera = self.create_subscription(CompressedImage, '/camera_image/compressed', self.camera_callback, qos_profile)
+        # Variables para almacenar imágenes
+        self.normal_frame = None  # Almacena la imagen de la cámara normal
+        self.aruco_frame = None  # Almacena la imagen con detección de ArUco
 
-        # Suscripción al tópico de imagen comprimida de deteccion de aruco
+        # Suscripción al tópico de imagen de la cámara normal
         self.subscription_camera = self.create_subscription(
-            CompressedImage, '/aruco_detection/compressed', self.camera_callback, qos_profile
+            CompressedImage, '/camera_image/compressed', self.camera_callback, qos_profile
+        )
+
+        # Suscripción al tópico de imagen comprimida de detección de ArUco
+        self.subscription_aruco = self.create_subscription(
+            CompressedImage, '/aruco_detection/compressed', self.aruco_callback, qos_profile
         )
 
         # Servicio para armar/desarmar el dron
@@ -144,10 +150,14 @@ class ChargingStationInterface(Node):
         self.flight_mode = msg.mode
 
     def camera_callback(self, msg):
-        """Callback para recibir y procesar las imágenes comprimidas."""
+        """Callback para recibir y procesar las imágenes comprimidas de la cámara normal."""
         np_arr = np.frombuffer(msg.data, np.uint8)
-        frame_gray = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
-        self.latest_frame = frame_gray
+        self.normal_frame = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)  # Imagen en grises
+
+    def aruco_callback(self, msg):
+        """Callback para recibir y procesar las imágenes comprimidas con detección de ArUco."""
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        self.aruco_frame = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)  # Imagen en grises
 
     def station_listener_callback(self, msg):
         """Callback para actualizar el estado de la estación de carga."""
@@ -823,9 +833,7 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_interface)
         self.timer.start(100)
-
-        # Inicializar cámara
-        self.cap = cv2.VideoCapture(0)
+        
 
     def update_interface(self):
         """Actualiza los elementos de la interfaz en tiempo real."""
@@ -897,13 +905,29 @@ class MainWindow(QMainWindow):
         self.flight_mode_status.setText(f"Flight Mode: {self.node.flight_mode}")
         self.manual_input_status.setText(f"Manual Input: {'Yes' if self.node.manual_input else 'No'}")
 
-        # Actualiza la imagen de la cámara
-        if self.node.latest_frame is not None:
-            frame = self.node.latest_frame
-            h, w = frame.shape
-            bytes_per_line = w
-            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
-            self.camera_label.setPixmap(QPixmap.fromImage(qimg))
+        # Actualiza la imagen de la cámara dependiendo del modo de vista
+        if self.camera_on:
+            frame = None
+            if self.view_mode == "normal" and self.node.normal_frame is not None:
+                frame = self.node.normal_frame
+            elif self.view_mode == "aruco" and self.node.aruco_frame is not None:
+                frame = self.node.aruco_frame
+
+            if frame is not None:
+                # Verifica si la imagen tiene 2 o 3 dimensiones
+                if len(frame.shape) == 2:  # Escala de grises
+                    height, width = frame.shape
+                    bytes_per_line = width
+                    qimage = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_Grayscale8)
+                elif len(frame.shape) == 3:  # RGB
+                    height, width, channel = frame.shape
+                    bytes_per_line = 3 * width
+                    qimage = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+                else:
+                    return  # Formato desconocido, no mostrar nada
+
+                # Actualiza el QLabel con la imagen
+                self.camera_label.setPixmap(QPixmap.fromImage(qimage))
 
     def start_charging(self):
         self.node.is_charging = True
@@ -1003,6 +1027,7 @@ class MainWindow(QMainWindow):
     def toggle_camera(self):
         """Activa o desactiva la cámara."""
         if not self.camera_on:
+            # Encender la cámara
             self.camera_on = True
             self.camera_toggle_button.setText("Camera OFF")
             self.camera_toggle_button.setStyleSheet("""
@@ -1026,7 +1051,15 @@ class MainWindow(QMainWindow):
                     );
                 }
             """)
+            # Mostrar un mensaje temporal o imagen cuando la cámara está encendida pero sin feed
+            self.camera_label.setText("")
+            self.camera_label.setStyleSheet("""
+                border: 3px solid #555555;
+                border-radius: 10px;
+                background-color: #1E1E1E;
+            """)
         else:
+            # Apagar la cámara
             self.camera_on = False
             self.camera_toggle_button.setText("Camera ON")
             self.camera_toggle_button.setStyleSheet("""
@@ -1050,6 +1083,18 @@ class MainWindow(QMainWindow):
                     );
                 }
             """)
+            # Cambiar el contenido del QLabel a un fondo vacío
+            self.camera_label.setPixmap(QPixmap())  # Limpia cualquier imagen
+            self.camera_label.setText("     ")  # Texto para indicar que la cámara está apagada
+            self.camera_label.setStyleSheet("""
+                font-size: 18px;
+                color: #FFFFFF;
+                background-color: #1E1E1E;
+                text-align: center;
+                border: 3px solid #555555;
+                border-radius: 10px;
+            """)
+
 
 
     def toggle_camera_view(self):
