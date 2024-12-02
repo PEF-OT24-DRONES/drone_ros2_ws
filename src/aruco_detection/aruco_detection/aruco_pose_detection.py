@@ -6,6 +6,8 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 import math
+from geometry_msgs.msg import PoseStamped
+
 
 class ArucoPoseDetectionNode(Node):
     def __init__(self):
@@ -20,12 +22,23 @@ class ArucoPoseDetectionNode(Node):
         
         self.publisher = self.create_publisher(CompressedImage, '/aruco_detection/compressed', 10)
 
+        # Publisher for ArUco pose
+        self.pose_publisher = self.create_publisher(PoseStamped, '/aruco_pose', 10)
+
         # Load camera parameters for pose estimation
         self.camera_matrix = np.array([[1.01112869e+03, 0, 6.25027187e+02], 
                                        [0, 1.00939931e+03, 3.55205263e+02], 
                                        [0, 0, 1]], dtype=np.float32)
         self.dist_coeffs = np.array([-0.0031836, -0.10976409, 0.00019764, 
                                      -0.001902, -0.13254417])
+        
+        """
+        self.camera_matrix = np.array([[1.0, 0, 0.0], 
+                                       [0, 1.0, 0.0], 
+                                       [0, 0, 1]], dtype=np.float32)
+        self.dist_coeffs = np.array([0.0, 0.0, 0.0, 
+                                     0.0, 0.0])
+        """
 
         # Define the ArUco dictionary and parameters
         self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
@@ -62,6 +75,17 @@ class ArucoPoseDetectionNode(Node):
             y = math.atan2(-R[2, 0], sy)
             z = 0
         return np.array([x, y, z])
+    
+    @staticmethod
+    def eulerAnglesToQuaternion(roll, pitch, yaw):
+        """
+        Convert Euler angles to quaternion.
+        """
+        qx = math.sin(roll / 2) * math.cos(pitch / 2) * math.cos(yaw / 2) - math.cos(roll / 2) * math.sin(pitch / 2) * math.sin(yaw / 2)
+        qy = math.cos(roll / 2) * math.sin(pitch / 2) * math.cos(yaw / 2) + math.sin(roll / 2) * math.cos(pitch / 2) * math.sin(yaw / 2)
+        qz = math.cos(roll / 2) * math.cos(pitch / 2) * math.sin(yaw / 2) - math.sin(roll / 2) * math.sin(pitch / 2) * math.cos(yaw / 2)
+        qw = math.cos(roll / 2) * math.cos(pitch / 2) * math.cos(yaw / 2) + math.sin(roll / 2) * math.sin(pitch / 2) * math.sin(yaw / 2)
+        return [qx, qy, qz, qw]
 
     def image_callback(self, msg):
         try:
@@ -125,14 +149,35 @@ class ArucoPoseDetectionNode(Node):
                     R_tc = R_ct.T  # Transpose rotation matrix to change coordinate systems
                     roll_marker, pitch_marker, yaw_marker = self.rotationMatrixToEulerAngles(R_tc)
 
-                    # Log position and attitude of the marker
+                    # Convert angles to degrees
+                    roll_deg = math.degrees(roll_marker)
+                    pitch_deg = math.degrees(pitch_marker)
+                    yaw_deg = math.degrees(yaw_marker)
+
+                    # Log position in meters and attitude in degrees
                     self.get_logger().info(
-                        f"[Marker {marker_id}] Position (x, y, z): {tvec[0]:.3f}, {tvec[1]:.3f}, {tvec[2]:.3f} meters"
+                        f"[Marker {marker_id}] Position (x, y, z): {tvec[0]:.3f} m, {tvec[1]:.3f} m, {tvec[2]:.3f} m"
                     )
                     self.get_logger().info(
                         f"[Marker {marker_id}] Attitude (roll, pitch, yaw): "
-                        f"{math.degrees(roll_marker):.2f}°, {math.degrees(pitch_marker):.2f}°, {math.degrees(yaw_marker):.2f}°"
+                        f"{roll_deg:.2f}°, {pitch_deg:.2f}°, {yaw_deg:.2f}°"
                     )
+
+                    # Publish the pose in meters and degrees
+                    pose_msg = PoseStamped()
+                    pose_msg.header.stamp = self.get_clock().now().to_msg()
+                    pose_msg.header.frame_id = 'camera_frame'
+                    pose_msg.pose.position.x = tvec[0]
+                    pose_msg.pose.position.y = tvec[1]
+                    pose_msg.pose.position.z = tvec[2]
+
+
+                    pose_msg.pose.orientation.x = roll_deg
+                    pose_msg.pose.orientation.y = pitch_deg
+                    pose_msg.pose.orientation.z = yaw_deg
+                    pose_msg.pose.orientation.w = 0.0
+
+                    self.pose_publisher.publish(pose_msg)
 
                     # Calculate corrections needed to center the drone
                     x_correction = -tvec[0]  # Lateral adjustment

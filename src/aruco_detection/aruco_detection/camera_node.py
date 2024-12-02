@@ -10,7 +10,7 @@ class CameraPublisherNode(Node):
         super().__init__('camera_publisher_node')
         self.publisher_ = self.create_publisher(CompressedImage, '/camera_image/compressed', 10)
         self.timer_ = self.create_timer(1/20, self.timer_callback)  # Publicar a 30 FPS
-        self.cap_ = cv2.VideoCapture(0)
+        self.cap_ = cv2.VideoCapture(2)
 
         # Establecer una resolución más baja (por ejemplo, 320x240)
         self.cap_.set(cv2.CAP_PROP_FRAME_WIDTH, 320)

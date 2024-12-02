@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import QLabel
 from PyQt6.QtGui import QImage, QPixmap
 import cv2
 import numpy as np
+from sensor_msgs.msg import CompressedImage
+from geometry_msgs.msg import PoseStamped
 
 class InteractiveMapWidget(QLabel):
     def __init__(self, map_image_path):
@@ -117,11 +119,21 @@ class ChargingStationInterface(Node):
 
         # Servicio para armar/desarmar el dron
         self.arm_client = self.create_client(CommandBool, '/mavros/cmd/arming')
-        while not self.arm_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Esperando al servicio /mavros/cmd/arming...')
+        #while not self.arm_client.wait_for_service(timeout_sec=1.0):
+        #    self.get_logger().info('Esperando al servicio /mavros/cmd/arming...')
 
         # SUbscriber al charging station status
         self.subscription_charging = self.create_subscription(String, 'charging_station_status', self.station_listener_callback, qos_profile)
+
+        # Suscripción al tópico de orientación del ArUco
+        self.subscription_pose = self.create_subscription(
+            PoseStamped,
+            '/aruco_pose',
+            self.pose_callback,
+            10
+        )
+        
+        self.yaw_angle = 0.0  # Inicializa el valor del yaw
 
         # Variables para almacenar los datos del dron
         self.is_charging = False
@@ -135,11 +147,13 @@ class ChargingStationInterface(Node):
         # Inicializa el estado de la estación de carga
         self.charging_station_status = "CLOSED"
         # Funciones para los botones de la pestaña del drone
+        self.battery_voltage = 0.0  # Voltaje inicial
 
 
     def battery_callback(self, msg):
         """Callback para recibir datos de la batería."""
         self.battery_percentage = msg.percentage * 100.0  # Convertir a porcentaje
+        self.battery_voltage = msg.voltage  # Obtiene el voltaje actual de la batería
 
     def state_callback(self, msg):
         """Callback para recibir el estado del dron."""
@@ -182,6 +196,14 @@ class ChargingStationInterface(Node):
             self.get_logger().info("Dron armado con éxito.")
         else:
             self.get_logger().error("Error al armar el dron.")
+
+    def pose_callback(self, msg):
+        """Callback para recibir la orientación del ArUco."""
+        self.yaw_angle = msg.pose.orientation.z  # Asigna el valor de yaw (en grados)
+        self.z_alt = msg.pose.position.z
+
+    
+
 
 class MainWindow(QMainWindow):
     def __init__(self, node):
@@ -605,18 +627,38 @@ class MainWindow(QMainWindow):
         battery_layout.addWidget(self.battery_progress)
         drone_layout.addLayout(battery_layout)
 
+        # Correct Orientation
+        self.correct_orientation_label = QLabel("Correct Orientation: False")
+        self.correct_orientation_label.setStyleSheet("""
+            font-size: 16px;
+            color: white;
+            background-color: #1E1E1E;
+            padding: 10px;
+            border: 1px solid #555555;
+            border-radius: 5px;
+            text-align: left;
+        """)
+        info_layout.addWidget(self.correct_orientation_label)
+
         # Layout para cámara y botones
         camera_layout = QVBoxLayout()
 
+        # Contenedor horizontal para centrar la cámara más a la derecha
+        camera_container_layout = QHBoxLayout()
+        camera_container_layout.addStretch()  # Espacio flexible a la izquierda
+
         # Video en tiempo real de la cámara
         self.camera_label = QLabel(self)
-        self.camera_label.setFixedSize(400, 300)
+        self.camera_label.setFixedSize(320, 240)
         self.camera_label.setStyleSheet("""
             border: 3px solid #555555;
             border-radius: 10px;
             background-color: #1E1E1E;
         """)
-        camera_layout.addWidget(self.camera_label)
+        camera_container_layout.addWidget(self.camera_label)  # Agregar la cámara al layout
+
+        camera_container_layout.addStretch()  # Espacio flexible a la derecha (opcional)
+        camera_layout.addLayout(camera_container_layout)
 
         # Botones para la cámara en un layout horizontal
         button_layout = QHBoxLayout()
@@ -833,71 +875,144 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_interface)
         self.timer.start(100)
+
+    def calculate_battery_percentage(self, voltage, min_voltage=9.8, max_voltage=12.2):
+        """Calcula el porcentaje de batería basado en el voltaje."""
+        if voltage < min_voltage:
+            return 0.0  # Batería completamente descargada
+        elif voltage > max_voltage:
+            return 100.0  # Batería completamente cargada
+        else:
+            # Mapeo lineal
+            return (voltage - min_voltage) / (max_voltage - min_voltage) * 100.0
         
 
     def update_interface(self):
         """Actualiza los elementos de la interfaz en tiempo real."""
         # Actualiza el progreso de la batería
         battery_level = self.node.battery_percentage
+        battery_voltage = self.node.battery_voltage
+
+        # Imprimir el porcentaje de la batería en la consola
+        print(f"Battery: {battery_level:.1f}% ({battery_voltage:.2f}V)")
+        #self.battery_progress.setValue(int(battery_level))
+
+        battery_level = self.calculate_battery_percentage(battery_voltage)
+
+        # Actualiza el ProgressBar con el nuevo porcentaje
         self.battery_progress.setValue(int(battery_level))
 
+        # Actualiza el QLabel con el voltaje actual
+        self.battery_progress.setFormat(f"{battery_level:.1f}% ({battery_voltage:.2f}V)")
+
+        # Cambia el color del ProgressBar según el nivel de batería
         if battery_level > 70:
             self.battery_progress.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #555555;
-                border-radius: 5px;
-                text-align: center;
-                color: white;
-                font-size: 16px;
-                background-color: #1E1E1E;
-                height: 40px;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(
-                    spread:pad, x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #00CC00, stop:1 #FFD369
-                );
-                border-radius: 5px;
-            }
-        """)
+                QProgressBar {
+                    border: 2px solid #555555;
+                    border-radius: 5px;
+                    text-align: center;
+                    color: white;
+                    font-size: 16px;
+                    background-color: #1E1E1E;
+                    height: 40px;
+                }
+                QProgressBar::chunk {
+                    background-color: qlineargradient(
+                        spread:pad, x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #00CC00, stop:1 #FFD369
+                    );
+                    border-radius: 5px;
+                }
+            """)
         elif 40 <= battery_level <= 70:
             self.battery_progress.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #555555;
-                border-radius: 5px;
-                text-align: center;
-                color: white;
-                font-size: 16px;
-                background-color: #1E1E1E;
-                height: 40px;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(
-                    spread:pad, x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #00CC00, stop:1 #FFD369
-                );
-                border-radius: 5px;
-            }
-        """)
+                QProgressBar {
+                    border: 2px solid #555555;
+                    border-radius: 5px;
+                    text-align: center;
+                    color: white;
+                    font-size: 16px;
+                    background-color: #1E1E1E;
+                    height: 40px;
+                }
+                QProgressBar::chunk {
+                    background-color: qlineargradient(
+                        spread:pad, x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #FFFF00, stop:1 #FFD369
+                    );
+                    border-radius: 5px;
+                }
+            """)
         else:
             self.battery_progress.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #555555;
+                QProgressBar {
+                    border: 2px solid #555555;
+                    border-radius: 5px;
+                    text-align: center;
+                    color: white;
+                    font-size: 16px;
+                    background-color: #1E1E1E;
+                    height: 40px;
+                }
+                QProgressBar::chunk {
+                    background-color: qlineargradient(
+                        spread:pad, x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #FF0000, stop:1 #FFD369
+                    );
+                    border-radius: 5px;
+                }
+            """)
+            
+        # Validar si el yaw está en el rango correcto
+        if -10 <= self.node.yaw_angle <= 10:
+            self.correct_orientation_label.setText("Correct Orientation: True")
+            self.correct_orientation_label.setStyleSheet("""
+                font-size: 16px;
+                color: #00CC00;
+                background-color: #1E1E1E;
+                padding: 10px;
+                border: 1px solid #00CC00;
+                border-radius: 5px;
+                text-align: left;
+            """)
+        else:
+            self.correct_orientation_label.setText("Correct Orientation: False")
+            self.correct_orientation_label.setStyleSheet("""
+                font-size: 16px;
+                color: #FF0000;
+                background-color: #1E1E1E;
+                padding: 10px;
+                border: 1px solid #FF0000;
+                border-radius: 5px;
+                text-align: left;
+            """)
+
+        # Validar si el yaw está en el rango correcto
+        if  self.node.z_alt > 1.5:
+            self.station_status.setText("Status: Available")
+            self.station_status.setStyleSheet("""
+                font-size: 16px;
+                font-weight: bold;
+                color: #00CC00;
+                background-color: #333333;
+                padding: 10px;
+                border: 1px solid #00CC00;
                 border-radius: 5px;
                 text-align: center;
-                color: white;
+            """)
+        else:
+            self.station_status.setText("Status: Occupied")
+            self.station_status.setStyleSheet("""
                 font-size: 16px;
-                background-color: #1E1E1E;
-                height: 40px;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(
-                    spread:pad, x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #00CC00, stop:1 #FFD369
-                );
+                font-weight: bold;
+                color: #CC0000;
+                background-color: #333333;
+                padding: 10px;
+                border: 1px solid #CC0000;
                 border-radius: 5px;
-            }
-        """)
+                text-align: left;
+            """)
 
         # Actualiza el estado de conexión del dron
         self.drone_connection_status.setText(f"Connection: {'Yes' if self.node.drone_connected else 'No'}")
@@ -1182,11 +1297,13 @@ class MainWindow(QMainWindow):
         self.node.arm_drone()
         QTimer.singleShot(20000, self.close_charging)
 
+    
 
 
 def main():
     rclpy.init()
     ros2_node = ChargingStationInterface()
+
     app = QApplication(sys.argv)
     main_window = MainWindow(ros2_node)
     main_window.show()
